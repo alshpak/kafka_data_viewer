@@ -1,0 +1,68 @@
+apply plugin: 'scala'
+apply plugin: 'application'
+
+repositories {
+    jcenter()
+    maven {
+        url "http://packages.confluent.io/maven/"
+    }
+}
+
+dependencies {
+    //compile 'log4j:log4j:1.2.16' // Apache 2
+    compile 'org.slf4j:slf4j-api:1.7.25'
+    compile 'org.slf4j:slf4j-log4j12:1.7.25'
+
+    compile 'org.scala-lang:scala-library:2.12.8' // Apache 2
+    compile 'org.scala-lang.modules:scala-xml_2.12:1.1.+' // Apache 2
+
+    compile 'io.reactivex.rxjava2:rxjava:2.2.2' // Apache 2
+    
+    compile 'org.apache.kafka:kafka-clients:1.1.1' // Apache 2
+    compile 'org.apache.kafka:kafka_2.12:1.1.1' // Apache 2
+
+    compile 'org.apache.avro:avro:1.8.2' // Apache 2
+    compile 'io.confluent:kafka-avro-serializer:3.3.2' //{ exclude group: 'org.slf4j' } // Apache 2
+    compile 'tech.allegro.schema.json2avro:converter:0.2.6' // Apache 2
+
+    compile group: 'joda-time', name: 'joda-time', version: '2.10' // Apache 2
+
+    compile 'com.fasterxml.jackson.core:jackson-core:2.9.6' // Apache 2
+    compile 'com.fasterxml.jackson.core:jackson-databind:2.9.6' // Apache 2
+
+    compile 'commons-cli:commons-cli:1.4' // Apache 2
+
+    compile 'org.yaml:snakeyaml:1.23' // Apache 2
+    
+    testCompile "junit:junit:4.4"
+}
+
+
+//mainClassName = "epam.devtools.appmonitor.montool.MonToolMain"
+
+sourceSets {
+    main {
+        scala {
+            srcDirs = ['src/main/scala']
+        }
+        resources {
+            srcDirs = ['src/main/resources']
+        }
+    }
+    test {
+        scala {
+            srcDirs = ['src/test']
+        }
+    }
+}
+
+task fatJar(type: Jar) {
+    manifest {
+        attributes 'Implementation-Title': 'Kafka Data Viewer full pack',
+                'Implementation-Version': version,
+                'Main-Class': 'epam.devtools.appmonitor.montool.MonToolMain'
+    }
+    baseName = project.name + '-all'
+    from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
+    with jar
+}
