@@ -172,6 +172,71 @@ object KafkaConnTopicsInfo {
 
 }
 
+case class AvroRegistriesManagement(
+                                           registry: Observable[Seq[(String, Boolean)]],
+                                           onAddNewServer: String => Unit,
+                                           onRemoveServer: String => Unit)
+
+class KafkaManageMessageTypesPane(val layoutData: String = "",
+                                  avroRegistriesManagement: AvroRegistriesManagement
+                                 )(implicit uiRenderer: UiRenderer) extends UiComponent {
+
+    class ManageAvroConnectionsPane(val layoutData: String = "") extends UiComponent {
+
+        type TableItem = (String, Boolean)
+
+        private val selection = publishSubject[Seq[TableItem]]()
+
+        private def addNewServer(): Unit =
+            for (result <- serverValuePopup("")) avroRegistriesManagement.onAddNewServer(result)
+
+        private def serverValuePopup(server: String): Option[String] = {
+            var result: Option[String] = None
+            val serverField = behaviorSubject(server)
+            val onOk = publishSubject[Unit]()
+            for (_ <- onOk) result = Some(serverField.value)
+            val onClose = publishSubject[Unit]()
+            onClose <<< onOk
+
+            class ChangeServerPane(val layoutData: String = "") extends UiComponent {
+
+                override def content(): UiWidget = UiPanel(layoutData, Grid("cols 2"), items = Seq(
+                    UiLabel(text = "Avro Server"),
+                    UiText("growx", text = serverField),
+                    UiPanel("growx, colspan 2", Grid("cols 2"), items = Seq(
+                        UiButton(text = "Ok", onAction = onOk),
+                        UiButton(text = "Cancel", onAction = onClose)
+                    ))
+                ))
+            }
+
+            uiRenderer.runModal(new ChangeServerPane(), close = onClose)
+            result
+        }
+
+        private val onRemove = publishSubject[Unit]()
+        for ((_, selection) <- onRemove.withLatestFrom(selection); item <- selection.headOption; if !item._2) avroRegistriesManagement.onRemoveServer(item._1)
+
+        override def content(): UiWidget = UiPanel(layoutData, Grid("cols 1"), items = Seq(
+            UiLabel(text = "The list of Avro servers"),
+            UiTable[TableItem]("grow",
+                items = avroRegistriesManagement.registry.map(SetList(_)),
+                columns = Seq[UiColumn[TableItem]](
+                    UiColumn(title = "Registry", _._1),
+                    UiColumn(title = "In Use", _._2.toString)),
+                selection = selection,
+                multiSelect = false
+            ),
+            UiPanel("growx", Grid("cols 2"), items = Seq(
+                UiButton(text = "Add", onAction = addNewServer),
+                UiButton(text = "Remove", onAction = onRemove)
+            ))
+        ))
+    }
+
+    override def content(): UiWidget = new ManageAvroConnectionsPane(layoutData)
+}
+
 class KafkaConnectionPane(val layoutData: String = "",
                           connDef: ConnectionDefinition,
                           loggingConsumer: ConsumerConnection,
@@ -183,6 +248,7 @@ class KafkaConnectionPane(val layoutData: String = "",
                           avroRegistires: BehaviorSubject[Seq[String]],
                           closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
 
+    type TopicName = String
     private val msgEncoders: String => MessageType = topic => StringMessage
     private val typesRegistry = new TypesRegistry(topicToType, avroRegistires)
 
@@ -196,14 +262,26 @@ class KafkaConnectionPane(val layoutData: String = "",
         StringMessage +: ZipMessage +: avroRegistires.value.map(AvroMessage)
     )
 
-    private val applyMessageTypes = publishSubject[(Seq[String], MessageType)]()
+    private val applyMessageTypes = publishSubject[(Seq[TopicName], MessageType)]()
     for ((topics, typeToApply) <- applyMessageTypes)
         topicToType << (topicToType.value.filterNot { case (topic, _) => topics.contains(topic) } ++ topics.map(_ -> typeToApply))
 
     for (debug <- applyMessageTypes) println("Was attempt to change message types " + debug)
 
-    private val manageMessageTypes = publishSubject[Unit]()
+    private def manageMessageTypes(): Unit = {
 
+        val registryMappings = avroRegistires.withLatestFrom(topicToType)
+                .map { case (registries, mappings) =>
+                    registries.map(registry => registry -> mappings.find(mapping => mapping._2 match {case AvroMessage(srv) if registry == srv => true; case _ => false}))
+                }
+                .mapSeq { case (registry, hasMappingOpt) => registry -> hasMappingOpt.isDefined }
+        val mgmt = AvroRegistriesManagement(
+            registry = registryMappings,
+            onAddNewServer = srv => avroRegistires << avroRegistires.value :+ srv,
+            onRemoveServer = srv => avroRegistires << avroRegistires.value.filterNot(srv ==)
+        )
+        uiRenderer.runModal(new KafkaManageMessageTypesPane(avroRegistriesManagement = mgmt))
+    }
 
     private val topicsData = KafkaConnTopicsData(
         topicsList = topicsList,
