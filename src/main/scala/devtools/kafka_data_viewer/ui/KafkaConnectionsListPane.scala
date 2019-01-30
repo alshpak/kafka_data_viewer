@@ -13,21 +13,21 @@ class KafkaConnectionsListPane(val layoutData: String = "",
                                onConnect: Subject[ConnectionDefinition],
                               )(implicit uiRenderer: UiRenderer) extends UiComponent {
 
-    private val onAdd = publishSubject[Any]()
-    private val onChange = publishSubject[Any]()
-    private val onRemove = publishSubject[Any]()
+    private val onAdd = publishSubject[Unit]()
+    private val onChange = publishSubject[Unit]()
+    private val onRemove = publishSubject[Unit]()
     private val connSelected = behaviorSubject(Seq[ConnectionDefinition]())
 
     for (_ <- onAdd) {
         val applyHandle = publishSubject[ConnectionDefinition]()
-        val closeHandle = publishSubject[Any]()
+        val closeHandle = publishSubject[Unit]()
         for (conn <- applyHandle) connections << (connections.value :+ conn)
         uiRenderer.runModal(new ConfigureConnectionWindow("", ConnectionDefinition("", "", ""), applyHandle, closeHandle))
     }
 
     for (_ <- onChange; selectedCon <- connSelected.value.headOption) {
         val applyHandle = publishSubject[ConnectionDefinition]()
-        val closeHandle = publishSubject[Any]()
+        val closeHandle = publishSubject[Unit]()
         for (conn <- applyHandle) connections << (connections.value :+ conn).filterNot(selectedCon ==)
         uiRenderer.runModal(new ConfigureConnectionWindow("", selectedCon, applyHandle, closeHandle), close = closeHandle)
     }
@@ -51,24 +51,24 @@ class ConfigureConnectionWindow(
                                        val layoutData: String = "",
                                        conn: ConnectionDefinition,
                                        onApply: Subject[ConnectionDefinition],
-                                       onClose: Subject[Any]
+                                       onClose: Subject[Unit]
                                ) extends UiComponent {
-    private val onOk = publishSubject[Any]()
+    private val onOk = publishSubject[Unit]()
     for (_ <- onOk) {
-        onApply onNext ConnectionDefinition(kafkaHost = host.value, avroHost = avro.value, zoo = zoo.value)
+        onApply onNext ConnectionDefinition(name = name.value, kafkaHost = host.value, zoo = zoo.value, topicSettings = conn.topicSettings)
         onClose onNext Unit
     }
+    private val name = behaviorSubject(conn.name)
     private val host = behaviorSubject[String](conn.kafkaHost)
-    private val avro = behaviorSubject[String](Option(conn.avroHost).getOrElse(""))
     private val zoo = behaviorSubject[String](Option(conn.zoo).getOrElse(""))
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("cols 2"), items = Seq(
+        UiLabel(text = "Connection Name"),
+        UiText("growx", text = name),
         UiLabel(text = "Kafka Host"),
         UiText("growx", text = host),
         UiLabel(text = "Zoo Host"),
         UiText("growx", text = zoo),
-        UiLabel(text = "Avro Host"),
-        UiText("growx", text = avro),
         UiPanel("colspan 2", Grid("cols 2"), items = Seq(
             UiButton(text = "Ok", onAction = onOk),
             UiButton(text = "Cancel", onAction = onClose)

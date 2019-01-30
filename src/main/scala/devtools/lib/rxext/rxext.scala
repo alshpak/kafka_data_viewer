@@ -1,6 +1,4 @@
 package devtools.lib.rxext
-
-import io.reactivex.functions.BiFunction
 //import io.reactivex.subjects.Subject
 //import io.reactivex.{Observable, ObservableSource}
 
@@ -57,8 +55,6 @@ object RxExtOps {
 
 object ListChangeOps {
 
-    import RxExtOps._
-
     trait ListChangeOp[T]
 
     case class SetList[T](items: Seq[T]) extends ListChangeOp[T]
@@ -86,3 +82,27 @@ object ListChangeOps {
 
 }
 
+object LoggableOps {
+
+    sealed trait LoggingOp[T] {
+        def map[R](f: T => R): LoggingOp[R]
+    }
+
+    case class AppendLogOp[T](items: Seq[T]) extends LoggingOp[T] {
+        override def map[R](f: T => R): LoggingOp[R] = AppendLogOp(items.map(f))
+    }
+
+    case class ResetLogOp[T]() extends LoggingOp[T] {
+        override def map[R](f: T => R): LoggingOp[R] = ResetLogOp()
+    }
+
+    implicit class ObsForLogOps[T](obs: Observable[LoggingOp[T]]) {
+        def fromLogOps(): Observable[Seq[T]] = {
+            val result = ArrayBuffer[T]()
+            obs.map {
+                case AppendLogOp(items) => result ++= items; result
+                case ResetLogOp() => result.clear(); result
+            }
+        }
+    }
+}

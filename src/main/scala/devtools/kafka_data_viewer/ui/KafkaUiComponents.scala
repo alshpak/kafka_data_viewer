@@ -2,7 +2,8 @@ package devtools.kafka_data_viewer.ui
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import devtools.lib.rxext.ListChangeOps.{AddItems, ListChangeOp, SetList}
-import devtools.lib.rxext.Observable.just
+import devtools.lib.rxext.LoggableOps.{AppendLogOp, LoggingOp, ResetLogOp}
+import devtools.lib.rxext.Observable.{empty, just}
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
@@ -24,8 +25,8 @@ class PreFilterPane[T](val layoutData: String,
     private val currentName = Subject.behaviorSubject("")
     private val currentNameTrimmed = currentName.map(_.trim())
 
-    private val onSave = publishSubject[Any]()
-    private val onDelete = publishSubject[Any]()
+    private val onSave = publishSubject[Unit]()
+    private val onDelete = publishSubject[Unit]()
 
     private val shownFilters = filters.map(titleAll +: titleNothing +: _.map(_._1))
     private val allowActions = currentNameTrimmed.map(name => !name.isEmpty && !name.equals(titleAll) && !name.equals(titleNothing))
@@ -47,8 +48,8 @@ class PreFilterPane[T](val layoutData: String,
         UiLabel("growx", text = just("Pre-filter\n - type name to save\n - select from list to use")),
         UiPanel("growx", Grid("cols 3"), items = Seq(
             UiCombo("growx", text = currentName, selection = filterSelected, items = shownFilters),
-            UiButton(text = "Save", onAction = onSave, enabled = allowActions),
-            UiButton(text = "Del", onAction = onDelete, enabled = allowActions)
+            UiButton(text = "Save", onAction = onSave, disabled = allowActions.map(!_)),
+            UiButton(text = "Del", onAction = onDelete, disabled = allowActions.map(!_))
         ))
     ))
 }
@@ -77,8 +78,8 @@ class SearchElementsPane[T](val layoutData: String,
     private var searchResult: Seq[T] = Seq()
     private var currentElement = -1
 
-    private val onNext: Subject[Any] = publishSubject()
-    private val onPrev: Subject[Any] = publishSubject()
+    private val onNext: Subject[Unit] = publishSubject()
+    private val onPrev: Subject[Unit] = publishSubject()
 
     private def updateSearchResults(): Unit = {
         if (searchTextCurrent.value.isEmpty) {
@@ -155,20 +156,21 @@ class SearchedTextDataPane(val layoutData: String,
                 selection = selection,
                 compare = compare,
                 searchText = searchText),
-            UiStyledText("grow", multi = true, text = text.asSubject, selection = textSelection)
+            UiStyledText("grow", multi = true, text = text.asPublishSubject, selection = textSelection)
         ))
 }
 
 class TableOutputDataPane[T](val layoutData: String,
-                             records: Observable[_ <: Observable[Seq[T]]],
+                             records: Observable[LoggingOp[T]],
                              compare: (T, String) => Boolean,
-                             onRefreshData: Option[Subject[Unit]] = None,
+                             onLoadNewData: Option[Subject[Unit]] = None,
                              fields: Seq[(String, T => String)],
                              valueField: T => String,
                              sorting: PartialFunction[String, (T, T) => Boolean]
                             ) extends UiComponent {
 
     private val displayRecords: Subject[ListChangeOp[T]] = publishSubject()
+    private val cachedDisplayedRecords = displayRecords.fromListOps()
     private val cachedRecords = scala.collection.mutable.ArrayBuffer[T]()
     private val cachedRecordsSubj: Subject[(Seq[T], Boolean)] = publishSubject()
 
@@ -177,21 +179,21 @@ class TableOutputDataPane[T](val layoutData: String,
     selectedRecords <<< searchSelection.map(Seq(_))
 
     private val selectedRecordValue: Subject[String] = publishSubject()
-    selectedRecordValue <<< selectedRecords.map(x => valueField(x.head))
-    private val selectedRecordJSonValue: Subject[String] = publishSubject()
-    selectedRecordJSonValue <<< selectedRecords.map(x => valueField(x.head)).map(beautifyJSon)
+    selectedRecordValue <<< selectedRecords.map(x =>  x.headOption.map(valueField).getOrElse(""))
+    private val selectedRecordJSonValue = selectedRecordValue.map(beautifyJSon)
 
-    for (recordObs <- records) {
-        displayRecords onNext SetList(Nil)
-        cachedRecords.clear()
-        cachedRecordsSubj onNext(cachedRecords, true)
-        selectedRecordValue onNext ""
-        selectedRecordJSonValue onNext ""
-        for (recordSeq <- recordObs) {
-            displayRecords onNext AddItems(recordSeq)
-            cachedRecords ++= recordSeq
+    for (recordOp <- records) recordOp match {
+        case ResetLogOp() =>
+            // println("Reset!")
+            displayRecords onNext SetList(Nil)
+            cachedRecords.clear()
+            cachedRecordsSubj onNext(cachedRecords, true)
+            selectedRecordValue onNext ""
+        case AppendLogOp(items) =>
+            // println("Append! " + items.size)
+            displayRecords onNext AddItems(items)
+            cachedRecords ++= items
             cachedRecordsSubj onNext(cachedRecords, false)
-        }
     }
 
     def sortRecords(key: String, asc: Boolean): Unit = displayRecords onNext
@@ -217,9 +219,9 @@ class TableOutputDataPane[T](val layoutData: String,
                     UiTable[T]("grow",
                         items = displayRecords,
                         selection = selectedRecords,
-                        columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, valueProvider = f2c.data, onSort = f2c.onSort))
+                        columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc:Boolean) => f2c.onSort.get << asc))
                     ),
-                    onRefreshData.map(_ => UiLink("growx", text = "<A>Click to read next portion of data</A>", onAction = onRefreshData)))
+                    onLoadNewData.map(_ => UiLink("growx", text = "<A>Click to read next portion of data</A>", onAction = onLoadNewData)))
                         .filter(_.isDefined).map(_.get)),
                 UiTabPanel("grow", tabs = behaviorSubject(Seq(
                     UiTab(label = "Raw Output", content = new SearchedTextDataPane("grow", text = selectedRecordValue, defaultSearch = searchText)),

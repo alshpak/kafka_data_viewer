@@ -10,18 +10,16 @@ import io.reactivex.Scheduler
 import io.reactivex.Scheduler.Worker
 import io.reactivex.disposables.Disposable
 import javafx.application.{Application, Platform}
-import javafx.beans.property.{Property, ReadOnlyStringWrapper}
+import javafx.beans.property.{Property, SimpleStringProperty}
 import javafx.beans.value.{ChangeListener, ObservableValue}
-import javafx.collections.{FXCollections, ListChangeListener}
+import javafx.collections.ListChangeListener
 import javafx.event.{ActionEvent, EventHandler}
 import javafx.geometry.{HPos, Insets, VPos, Orientation => FxOrientation}
-import javafx.scene.control.TreeTableColumn.SortType
 import javafx.scene.control.{TableColumn, _}
 import javafx.scene.input._
 import javafx.scene.layout._
 import javafx.scene.{Node, Scene}
 import javafx.stage.{Modality, Stage, StageStyle}
-import javafx.util.Callback
 
 import scala.collection.JavaConverters._
 import scala.language.implicitConversions
@@ -34,14 +32,14 @@ object FxRender {
             for (item <- items) selection.select(item)
         }
         selection.getSelectedItems.addListener(new ListChangeListener[T] {
-            override def onChanged(c: ListChangeListener.Change[_ <: T]): Unit = obs << selection.getSelectedItems.asScala
+            override def onChanged(c: ListChangeListener.Change[_ <: T]): Unit = obs << selection.getSelectedItems.asScala.toList
         })
     }
 
     def linkBidirSingleSelect[T](obs: Subject[T], selection: SelectionModel[T]): Unit = {
         for (item <- obs; if item != selection.getSelectedItem) selection.select(item)
         selection.selectedItemProperty().addListener(new ChangeListener[T] {
-            override def changed(observable: ObservableValue[_ <: T], oldValue: T, newValue: T): Unit = obs << newValue
+            override def changed(observable: ObservableValue[_ <: T], oldValue: T, newValue: T): Unit = if (newValue != null) obs << newValue
         })
     }
 
@@ -85,6 +83,8 @@ object FxRender {
             val c: TextInputControl = if (w.multi) new TextArea() else new TextField()
             for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())
             for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))
+            for (editable <- w.editable) c.setEditable(editable)
+            for (disabled <- w.disabled) c.setDisable(disabled)
             c
         }
     }
@@ -94,6 +94,8 @@ object FxRender {
             val c: TextInputControl = if (w.multi) new TextArea() else new TextField()
             for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())
             for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))
+            for (editable <- w.editable) c.setEditable(editable)
+            for (disabled <- w.disabled) c.setDisable(disabled)
             c
         }
     }
@@ -101,12 +103,16 @@ object FxRender {
     class UiListRenderer[T](list: UiList[T]) extends Renderer[ListView[T]] {
         override def render(): ListView[T] = {
             val c = new ListView[T]()
-            c.getSelectionModel.setSelectionMode(if (list.multi) SelectionMode.MULTIPLE else SelectionMode.MULTIPLE)
+            for (disabled <- list.disabled) c.setDisable(disabled)
+            for (multi <- list.multiSelect) c.getSelectionModel.setSelectionMode(if (multi) SelectionMode.MULTIPLE else SelectionMode.MULTIPLE)
             c.setCellFactory((param: ListView[T]) => {
+                val c = new ListCell[T]()
                 new ListCell[T] {
                     override def updateItem(item: T, empty: Boolean): Unit = {
                         super.updateItem(item, empty)
-                        if (!empty && item != null) setText(list.valueProvider(item)) else setText(null)
+                        if (!empty && item != null) {
+                            for (text <- list.valueProvider(item)) setText(text)
+                        } else setText(null)
                     }
                 }
             })
@@ -118,8 +124,7 @@ object FxRender {
             for (obs <- list.onDblClick)
                 c.setOnMouseClicked((event: MouseEvent) => {
                     if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY) {
-                        println("Target on connect " + obs)
-                        obs << c.getSelectionModel.getSelectedItem
+                        obs(c.getSelectionModel.getSelectedItem)
                     }
                 })
             c
@@ -129,7 +134,6 @@ object FxRender {
     class UiComboRenderer(combo: UiCombo) extends Renderer[ComboBox[String]] {
         override def render(): ComboBox[String] = {
             val c = new ComboBox[String]()
-            c.setEditable(true)
             for (items <- combo.items) {
                 val selection = c.getSelectionModel.getSelectedItem
                 c.getItems.clear()
@@ -137,6 +141,7 @@ object FxRender {
                 if (items.contains(selection)) c.getSelectionModel.select(selection)
                 else c.getEditor.setText("")
             }
+            for (editable <- combo.editable) c.setEditable(editable)
             for (obs <- combo.text) linkBidirPropObservation(obs, c.getEditor.textProperty())
             for (obs <- combo.selection) linkBidirSingleSelect(obs, c.getSelectionModel)
             c
@@ -155,8 +160,7 @@ object FxRender {
     class UiButtonRenderer(button: UiButton) extends Renderer[Button] {
         override def render(): Button = {
             val c = new Button()
-
-            for (obs <- button.onAction) c.setOnAction((event: ActionEvent) => obs << Unit)
+            c.setOnAction((event: ActionEvent) => button.onAction())
             for (text <- button.text) c.setText(text)
             c
         }
@@ -167,20 +171,24 @@ object FxRender {
             val c = new TableView[T]()
             c.getSelectionModel.setSelectionMode(SelectionMode.MULTIPLE)
 
-            val colsToModels: Seq[(TableColumn[T, String], UiColumn[T])] = tableModel.columns.map(colModel => applying(new TableColumn[T, String]()) { col =>
-                col.setText(colModel.title)
-                col.setCellValueFactory((param: TableColumn.CellDataFeatures[T, String]) => new ReadOnlyStringWrapper(colModel.valueProvider(param.getValue)))
-                col.setSortable(colModel.onSort.isDefined)
-            } -> colModel)
-            c.getColumns.addAll(colsToModels.map(_._1).asJavaCollection)
-
-            c.sortPolicyProperty().set{ param: TableView[T] =>
-                for ((sortCol, sortColModel) <- c.getSortOrder.asScala.headOption.flatMap(sortCol => colsToModels.find(sortCol == _._1))) {
-                    sortColModel.onSort.get << (sortCol.getSortType == TableColumn.SortType.ASCENDING)
+            for (columns <- tableModel.columns) {
+                val colsToModels: Seq[(TableColumn[T, String], UiColumn[T])] = columns
+                        .map(colModel => applying(new TableColumn[T, String]()) { col =>
+                            col.setText(colModel.title)
+                            col.setCellValueFactory((param: TableColumn.CellDataFeatures[T, String]) => {
+                                applying(new SimpleStringProperty()) { prop => for (value <- colModel.value(param.getValue)) prop.setValue(value) }
+                            })
+                            col.setSortable(colModel.onSort.isDefined)
+                        } -> colModel)
+                c.getColumns.clear()
+                c.getColumns.addAll(colsToModels.map(_._1).asJavaCollection)
+                c.sortPolicyProperty().set { param: TableView[T] =>
+                    for ((sortCol, sortColModel) <- c.getSortOrder.asScala.headOption.flatMap(sortCol => colsToModels.find(sortCol == _._1))) {
+                        sortColModel.onSort.get(sortCol.getSortType == TableColumn.SortType.ASCENDING)
+                    }
+                    true
                 }
-                true
             }
-
 
             for (itemsOp <- tableModel.items) itemsOp match {
                 case SetList(items) => c.getItems.setAll(items.asJavaCollection)
@@ -192,9 +200,34 @@ object FxRender {
 
             for (selection <- tableModel.selection) linkBidirMultiSelection(selection, c.getSelectionModel)
 
-            for (obs <- tableModel.onDblClick) c.setOnMouseClicked((event: MouseEvent) =>
+            for (handler <- tableModel.onDblClick) c.setOnMouseClicked((event: MouseEvent) =>
                 if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY)
-                    obs << c.getSelectionModel.getSelectedItem)
+                    handler(c.getSelectionModel.getSelectedItem))
+
+            def menuToItems(parent: ContextMenu)(itemModel: UiMenuItem): MenuItem =
+                if (itemModel.subitems.isEmpty) applying(new MenuItem(itemModel.text)) { item => item.setOnAction { evt => parent.hide(); evt.consume(); itemModel.onSelect(); } }
+                else applying(new Menu(itemModel.text)) { item => item.getItems.addAll(itemModel.subitems.map(menuToItems(parent)).asJavaCollection) }
+
+            var prevMenu: Option[ContextMenu] = None
+            for (menuItems <- tableModel.menu; if menuItems.nonEmpty) {
+                val ctxMenuRoot = applying(new ContextMenu()) { cm =>
+                    cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
+                }
+                c.setContextMenu(ctxMenuRoot)
+            }
+//                for (selection <- Option(c.getSelectionModel.getSelectedItem)) {
+//                    val ctxMenuRoot = applying(new ContextMenu()) { cm =>
+//                        cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
+//                    }
+//                    c.setContextMenu(ctxMenuRoot)
+                    //prevMenu = Some(ctxMenuRoot)
+                    //c.getScene.getRoot.setCon
+                    //ctxMenuRoot.show(c, event.getScreenX, event.getScreenY)
+//                }
+//            c.setOnContextMenuRequested { event: ContextMenuEvent =>
+//                    for (prevMenu <- prevMenu) prevMenu.hide()
+//                }
+
             c
         }
     }
@@ -203,21 +236,25 @@ object FxRender {
         override def render(): TreeTableView[T] = {
             val treeTable = new TreeTableView[T]()
 
-            treeTable.getColumns.addAll(treeModel.columns.map(colModel => applying(new TreeTableColumn[T, String]()) { col =>
-                col.setText(colModel.title)
-                col.setCellValueFactory((param: TreeTableColumn.CellDataFeatures[T, String]) => new ReadOnlyStringWrapper(colModel.valueProvider(param.getValue.getValue)))
-                col.setSortable(false)
-            }).asJavaCollection)
+            for (columns <- treeModel.columns) {
+                treeTable.getColumns.addAll(columns.map(colModel => applying(new TreeTableColumn[T, String]()) { col =>
+                    col.setText(colModel.title)
+                    col.setCellValueFactory((param: TreeTableColumn.CellDataFeatures[T, String]) => {
+                        applying(new SimpleStringProperty()) { prop => for (value <- colModel.value(param.getValue.getValue)) prop.setValue(value) }
+                    })
+                    col.setSortable(false)
+                }).asJavaCollection)
+            }
 
             treeTable.setShowRoot(false)
             val rootItem = new TreeItem[T]()
             treeTable.setRoot(rootItem)
 
-            for (menu <- treeModel.menu)
+            for (menuItems <- treeModel.menu)
                 treeTable.setOnContextMenuRequested((event: ContextMenuEvent) =>
                     for (selection <- Option(treeTable.getSelectionModel.getSelectedItem).flatMap(x => Option(x.getValue))) {
                         val ctxMenuRoot = applying(new ContextMenu()) { cm =>
-                            cm.getItems.addAll(menu(selection).map(itemModel =>
+                            cm.getItems.addAll(menuItems.map(itemModel =>
                                 applying(new MenuItem(itemModel.text)) { item => }).asJavaCollection)
                         }
                         treeTable.setContextMenu(ctxMenuRoot)
@@ -242,14 +279,12 @@ object FxRender {
                 })
                 for (items <- selection; if items != selectionModel.getSelectedItems.asScala.map(_.getValue)) {
                     selectionModel.clearSelection()
-                    // selectionModel.
                 }
             }
 
-            for (obs <- treeModel.onDblClick) treeTable.setOnMouseClicked((event: MouseEvent) =>
+            for (handler <- treeModel.onDblClick) treeTable.setOnMouseClicked((event: MouseEvent) =>
                 if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY)
-                    obs << selectionModel.getSelectedItem.getValue)
-
+                    handler(selectionModel.getSelectedItem.getValue))
 
             treeTable
         }
@@ -361,7 +396,7 @@ object FxRender {
                 tabs.map { tabModel =>
                     val tab = new Tab()
                     for (label <- tabModel.label) tab.setText(label)
-                    tab.setContent(renderers.renderer(tabModel.content).render())
+                    for (content <- tabModel.content) tab.setContent(renderers.renderer(content).render())
                     tab.setClosable(false)
                     tab
                 }.asJavaCollection)
@@ -369,7 +404,7 @@ object FxRender {
         }
     }
 
-    class UiTabPanelListOpsRenderer[T](tabPanelModel: UiTabPanelListOps[T])(implicit renderers: FxRenderers) extends Renderer[Node] {
+    class UiTabPanelListOpsRenderer[T](tabPanelModel: UiTabPanelExt[T])(implicit renderers: FxRenderers) extends Renderer[Node] {
         override def render(): Node = {
             val pane = new TabPane()
             var itemsToContent = Map[T, Tab]()
@@ -377,7 +412,7 @@ object FxRender {
                 val tabModel = tabPanelModel.tab(itemModel)
                 val tab = new Tab()
                 for (label <- tabModel.label) tab.setText(label)
-                tab.setContent(renderers.renderer(tabModel.content).render())
+                for (content <- tabModel.content) tab.setContent(renderers.renderer(content).render())
                 tab.setClosable(tabPanelModel.closeable)
                 itemsToContent += itemModel -> tab
                 tab
@@ -480,7 +515,7 @@ object FxRender {
         def uiScheduler(): Scheduler = () => new Worker {
             private var disposed = false
 
-            override def schedule(run: Runnable, delay: Long, unit: TimeUnit): Disposable = {println("Do async"); Platform.runLater(run); this }
+            override def schedule(run: Runnable, delay: Long, unit: TimeUnit): Disposable = {/*println("Do async"); */ Platform.runLater(run); this }
 
             override def dispose(): Unit = disposed = true
 
@@ -492,7 +527,7 @@ object FxRender {
             LauncherImpl.launchApplication(classOf[App], Array())
         }
 
-        override def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Any]] = None): Unit = {
+        override def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit = {
             val dialog = new Stage(if (hideTitle) StageStyle.UNDECORATED else StageStyle.DECORATED)
 
             applyContentToState(content, dialog, fullScreen = false)(FxRender.renderers)
@@ -504,7 +539,7 @@ object FxRender {
             dialog.initOwner(FxRender.primaryStage)
             dialog.initModality(Modality.WINDOW_MODAL)
             dialog.showAndWait()
-            for (x <- close) x << Unit
+            for (x <- close) x << {}
         }
 
     }
@@ -523,7 +558,7 @@ object FxRender {
             case x: UiTree[_] => new UiTreeRenderer(x)
             case x: UiPanel => new UiPanelRenderer(x)
             case x: UiTabPanel => new UiTabPanelRenderer(x)
-            case x: UiTabPanelListOps[_] => new UiTabPanelListOpsRenderer(x)
+            case x: UiTabPanelExt[_] => new UiTabPanelListOpsRenderer(x)
             case x: UiSplitPane => new UiSplitPaneRenderer(x)
             case x: UiComponent => new UiComponentRenderer(x)
         }

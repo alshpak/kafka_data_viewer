@@ -4,6 +4,7 @@ import devtools.lib.rxext.ListChangeOps.ListChangeOp
 import devtools.lib.rxext.Observable.{empty, just}
 import devtools.lib.rxext.{Observable, Subject}
 import io.reactivex.Scheduler
+import UiImplicits._
 
 import scala.language.implicitConversions
 
@@ -15,34 +16,38 @@ case class Grid(markup: String = "") extends Layout
 
 case class UiMenu(items: Seq[UiMenuItem])
 
-case class UiMenuItem(text: String, onSelect: () => Unit, subitems: Seq[UiMenuItem] = Seq())
+case class UiMenuItem(text: String, onSelect: () => Unit = () => Unit, subitems: Seq[UiMenuItem] = Seq())
 
 case class UiLabel(layoutData: String = "", text: Observable[String] = empty()) extends UiWidget
 
 case class UiText(layoutData: String = "",
                   multi: Boolean = false,
                   text: Option[Subject[String]] = None,
-                  selection: Option[Subject[(Int, Int)]] = None) extends UiWidget
+                  selection: Option[Subject[(Int, Int)]] = None,
+                  editable: Observable[Boolean] = true,
+                  disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiStyledText(layoutData: String = "",
                         multi: Boolean = false,
-                        t: Either[Observable[String], Subject[String]] = Left(just("")),
                         text: Option[Subject[String]] = None,
-                        editable: Observable[Boolean] = just(true),
-                        selection: Option[Subject[(Int, Int)]] = None) extends UiWidget
+                        selection: Option[Subject[(Int, Int)]] = None,
+                        editable: Observable[Boolean] = true,
+                        disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiList[T](layoutData: String = "",
                      items: Observable[Seq[T]] = empty[Seq[T]](),
-                     valueProvider: T => String = (x: T) => x.toString,
+                     valueProvider: T => Observable[String] = (x: T) => x.toString,
                      selection: Option[Subject[Seq[T]]] = None,
-                     onDblClick: Option[_ <: Subject[_ >: T]] = None,
-                     multi: Boolean = false) extends UiWidget
+                     onDblClick: Option[T => Unit] = None,
+                     multiSelect: Observable[Boolean] = false,
+                     disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiCombo(layoutData: String = "",
                    items: Observable[Seq[String]] = empty(),
                    text: Option[Subject[String]] = None,
                    selection: Option[Subject[String]] = None,
-                   enabled: Option[Subject[Boolean]] = None) extends UiWidget
+                   editable: Observable[Boolean] = true,
+                   disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiLink(layoutData: String = "",
                   text: Observable[String] = empty(),
@@ -50,47 +55,47 @@ case class UiLink(layoutData: String = "",
 
 case class UiButton(layoutData: String = "",
                     text: Observable[String] = empty(),
-                    onAction: Option[_ <: Subject[_ >: Any]] = None,
-                    enabled: Observable[Boolean] = just(true)) extends UiWidget
+                    onAction: ()  => Unit = () => Unit,
+                    disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiColumn[T](
                               title: String,
-                              valueProvider: T => String = (x: T) => x.toString,
-                              onSort: Option[Subject[Boolean]] = None)
+                              value: T => Observable[String] = (_: T) => empty(),
+                              onSort: Option[Boolean => Unit] = None)
 
 case class UiTable[T](layoutData: String = "",
                       items: Observable[_ <: ListChangeOp[T]] = empty(),
-                      columns: Seq[UiColumn[T]] = Seq(),
+                      columns: Observable[Seq[UiColumn[T]]] = empty[Seq[UiColumn[T]]](),
                       selection: Option[Subject[Seq[T]]] = None,
-                      onDblClick: Option[Subject[T]] = None,
-                      disabled: Option[Observable[Boolean]] = None
+                      onDblClick: Option[T => Unit] = None,
+                      disabled: Observable[Boolean] = false,
+                      multiSelect: Observable[Boolean] = false,
+                      menu: Observable[Seq[UiMenuItem]] = empty()
                      ) extends UiWidget
 
 case class UiTree[T](layoutData: String = "",
                      items: Observable[Seq[T]] = empty[Seq[T]](),
-                     columns: Seq[UiColumn[T]] = Seq(),
+                     columns: Observable[Seq[UiColumn[T]]] = empty[Seq[UiColumn[T]]](),
+                     selection: Option[Subject[Seq[T]]] = None,
                      expanded: T => Boolean = (x: T) => false,
                      subitems: T => Observable[Seq[T]] = (x: T) => just(Seq()),
                      hasChildren: T => Boolean = (x: T) => false,
-                     selection: Option[Subject[Seq[T]]] = None,
-                     onDblClick: Option[Subject[T]] = None,
-                     menu: Option[T => Seq[UiMenuItem]] = None
+                     onDblClick: Option[T => Unit] = None,
+                     menu: Observable[Seq[UiMenuItem]] = empty(),
+                     disabled: Observable[Boolean] = false
                     ) extends UiWidget
 
-case class UiTab(label: Observable[String] = empty(), content: UiWidget)
+case class UiTab(label: Observable[String] = empty(), content: Observable[UiWidget])
 
 case class UiTabPanel(layoutData: String = "",
-                      tabs: Observable[Seq[UiTab]] = empty(),
-                      closeable: Boolean = false,
-                      onClose: UiWidget => Unit = _ => Unit) extends UiWidget
+                      tabs: Observable[Seq[UiTab]] = empty()) extends UiWidget
 
-
-case class UiTabPanelListOps[T](layoutData: String = "",
-                                tabs: Observable[_ <: ListChangeOp[T]] = empty[ListChangeOp[T]](),
-                                tab: T => UiTab,
-                                closeable: Boolean = false,
-                                onClose: T => Any = (_: T) => Unit,
-                                moveTabs: Boolean = false) extends UiWidget
+case class UiTabPanelExt[T](layoutData: String = "",
+                            tabs: Observable[_ <: ListChangeOp[T]] = empty(),
+                            tab: T => UiTab,
+                            closeable: Boolean = false,
+                            onClose: T => Any = (_: T) => Unit,
+                            moveTabs: Boolean = false) extends UiWidget
 
 trait UiOrientation
 
@@ -115,6 +120,14 @@ object UiImplicits {
 
     implicit def optAnyToJust[T](t: T): Option[Observable[T]] = Some(Observable.just(t))
 
+    implicit def functionToJustObservable[T](t: T => String): T => Observable[String] = x => just(t(x))
+
+    implicit def unitSubjectToConsumer(s: Subject[Unit]): () => Unit = () => s << Unit
+
+    implicit def subjectTo1ArgConsumer[T](s: Subject[T]): Some[T => Unit] = Some(x => s << x)
+
+//    implicit def consumerToSome(f: () => Unit): Option[() => Unit] = Some(f)
+
     //    implicit def asSubject[T](o: Observable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< o; subject }
     //
     //    implicit def asOptSubject[T](o: Observable[T]): Option[Subject[T]] = Some(asSubject(o))
@@ -131,7 +144,7 @@ trait UiRenderer {
 
     def runApp(root: UiWidget): Unit
 
-    def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Any]] = None): Unit
+    def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit
 
     def uiScheduler(): Scheduler
 }
