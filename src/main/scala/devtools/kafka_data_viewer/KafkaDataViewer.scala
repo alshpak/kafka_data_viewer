@@ -37,7 +37,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                             )(implicit uiRenderer: UiRenderer) extends UiComponent {
 
 
-    case class ConnectionsSet(logging: ConsumerConnection, master: ConsumerConnection, producer: ProducerConnection)
+    case class ConnectionsSet(logging: ConsumerConnection, read: ConsumerConnection, master: ConsumerConnection, producer: ProducerConnection)
 
     private def connectToServices(connDef: ConnectionDefinition) = {
 
@@ -54,7 +54,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
             host = connDef.kafkaHost,
             groupName = groupName)
 
-        ConnectionsSet(logging = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
+        ConnectionsSet(logging = connector.connectConsumer(), read = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
     }
 
 
@@ -122,8 +122,10 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
     }
 
     for (connHandle <- onClose.subscribeOn(Schedulers.newThread())) {
+        println("Close attempt")
         connHandle.connSet.master.close()
         connHandle.connSet.logging.close()
+        connHandle.connSet.read.close()
         connHandle.connSet.producer.close()
     }
 
@@ -138,6 +140,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                         content = new KafkaConnectionPane("",
                             connDef = itemHndl.connDef,
                             loggingConsumer = itemHndl.connSet.logging,
+                            readDataConsumer = itemHndl.connSet.read,
                             masterConsumer = itemHndl.connSet.master,
                             producer = itemHndl.connSet.producer,
                             initTopicsAndSizes = itemHndl.initTopicsAndSizes,
@@ -163,12 +166,11 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
 object KafkaConnTopicsInfo {
     type TopicInfoRec = (String, Long, Observable[MessageType])
 
-    case class KafkaConnTopicsData(
-                                          topicsList: Observable[Seq[TopicInfoRec]],
-                                          messageTypes: Observable[Seq[MessageType]],
-                                          onApplyMessageType: ((Seq[String], MessageType)) => Unit,
-                                          onManageMessageTypes: () => Unit,
-                                          onRequestRefresh: () => Unit)
+    case class KafkaTopicsMgmt(
+                                      messageTypes: Observable[Seq[MessageType]],
+                                      onApplyMessageType: ((Seq[String], MessageType)) => Unit,
+                                      onManageMessageTypes: () => Unit,
+                                      onRequestRefresh: () => Unit)
 
 }
 
@@ -240,6 +242,7 @@ class KafkaManageMessageTypesPane(val layoutData: String = "",
 class KafkaConnectionPane(val layoutData: String = "",
                           connDef: ConnectionDefinition,
                           loggingConsumer: ConsumerConnection,
+                          readDataConsumer: ConsumerConnection,
                           masterConsumer: ConsumerConnection,
                           producer: ProducerConnection,
                           initTopicsAndSizes: TopicsWithSizes,
@@ -258,9 +261,8 @@ class KafkaConnectionPane(val layoutData: String = "",
             .map(_ => masterConsumer.queryTopicsWithSizes())
             .mapSeq { case (topic, size) => (topic, size, topicToType.map(mappings => mappings.find(_._1 == topic).map(_._2).getOrElse(StringMessage))) }
 
-    private val messageTypes: Subject[Seq[MessageType]] = behaviorSubject(
-        StringMessage +: ZipMessage +: avroRegistires.value.map(AvroMessage)
-    )
+    private val messageTypes: Observable[Seq[MessageType]] =
+        avroRegistires.map(avroRegistires => StringMessage +: ZipMessage +: avroRegistires.map(AvroMessage))
 
     private val applyMessageTypes = publishSubject[(Seq[TopicName], MessageType)]()
     for ((topics, typeToApply) <- applyMessageTypes)
@@ -283,8 +285,7 @@ class KafkaConnectionPane(val layoutData: String = "",
         uiRenderer.runModal(new KafkaManageMessageTypesPane(avroRegistriesManagement = mgmt))
     }
 
-    private val topicsData = KafkaConnTopicsData(
-        topicsList = topicsList,
+    private val topicsData = KafkaTopicsMgmt(
         messageTypes = messageTypes,
         onApplyMessageType = applyMessageTypes <<,
         onManageMessageTypes = manageMessageTypes,
@@ -295,15 +296,18 @@ class KafkaConnectionPane(val layoutData: String = "",
         UiTabPanel("grow", tabs = Seq(
             UiTab(label = "Logging", content = new LoggingPane("",
                 loggingConsumer = loggingConsumer,
+                topicsList = topicsList,
                 filters = filters,
-                topicsData = topicsData,
+                topicsMgmt = topicsData,
                 typesRegistry = typesRegistry,
                 closed = closed)),
             UiTab(label = "Read Topic", content = new ReadTopicPane("",
-                consumer = masterConsumer,
-                topicsData = topicsData,
+                topicsList = topicsList,
+                masterCon = masterConsumer,
+                readCon = readDataConsumer,
+                topicsMgmt = topicsData,
                 typesRegistry = typesRegistry,
-                closed)),
+                closed = closed)),
             UiTab(label = "Produce message", content = new ProduceMessagePane("",
                 consumer = masterConsumer,
                 producer = producer,

@@ -3,7 +3,7 @@ package devtools.kafka_data_viewer.ui
 import com.fasterxml.jackson.databind.ObjectMapper
 import devtools.lib.rxext.ListChangeOps.{AddItems, ListChangeOp, SetList}
 import devtools.lib.rxext.LoggableOps.{AppendLogOp, LoggingOp, ResetLogOp}
-import devtools.lib.rxext.Observable.{empty, just}
+import devtools.lib.rxext.Observable.just
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
@@ -115,7 +115,7 @@ class SearchElementsPane[T](val layoutData: String,
     }
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("cols 5"), items = Seq(
-        UiLabel(text = "Filter"),
+        UiLabel(text = "Search: "),
         UiText("growx", text = searchText),
         UiLabel("w 200", text = searchResultsLabel),
         UiButton(text = "Prev", onAction = onPrev),
@@ -179,7 +179,7 @@ class TableOutputDataPane[T](val layoutData: String,
     selectedRecords <<< searchSelection.map(Seq(_))
 
     private val selectedRecordValue: Subject[String] = publishSubject()
-    selectedRecordValue <<< selectedRecords.map(x =>  x.headOption.map(valueField).getOrElse(""))
+    selectedRecordValue <<< selectedRecords.map(x => x.headOption.map(valueField).getOrElse(""))
     private val selectedRecordJSonValue = selectedRecordValue.map(beautifyJSon)
 
     for (recordOp <- records) recordOp match {
@@ -219,7 +219,7 @@ class TableOutputDataPane[T](val layoutData: String,
                     UiTable[T]("grow",
                         items = displayRecords,
                         selection = selectedRecords,
-                        columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc:Boolean) => f2c.onSort.get << asc))
+                        columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc: Boolean) => f2c.onSort.get << asc))
                     ),
                     onLoadNewData.map(_ => UiLink("growx", text = "<A>Click to read next portion of data</A>", onAction = onLoadNewData)))
                         .filter(_.isDefined).map(_.get)),

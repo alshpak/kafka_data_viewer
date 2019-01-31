@@ -1,13 +1,13 @@
 package devtools.kafka_data_viewer.ui
 
-import devtools.kafka_data_viewer.KafkaConnTopicsInfo.{KafkaConnTopicsData, _}
+import devtools.kafka_data_viewer.KafkaConnTopicsInfo.{KafkaTopicsMgmt, _}
 import devtools.kafka_data_viewer.KafkaDataViewer
 import devtools.kafka_data_viewer.KafkaDataViewer.{TopicRecord, isNumber}
 import devtools.kafka_data_viewer.kafkaconn.Connector._
 import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, MessageType, StringMessage, ZipMessage}
 import devtools.lib.rxext.ListChangeOps.SetList
 import devtools.lib.rxext.LoggableOps.{AppendLogOp, LoggingOp, ResetLogOp}
-import devtools.lib.rxext.Observable.{combineLatest, empty}
+import devtools.lib.rxext.Observable.{combineLatest, empty, just}
 import devtools.lib.rxext.ObservableSeqExt._
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
@@ -98,34 +98,38 @@ class RecordsOutputTablePane(val layoutData: String,
     )
 }
 
+class TopicsOverviewPane(val layoutData: String = "")
 
 class TopicsTablePane(val layoutData: String,
-                      paneData: KafkaConnTopicsData,
-                      selection: Subject[Seq[String]],
-                      onTopicDblClick: String => Unit
+                      topicsList: Observable[Seq[TopicInfoRec]],
+                      topicsMgmt: KafkaTopicsMgmt,
+                      selection: Subject[Seq[String]] = publishSubject(),
+                      onTopicDblClick: String => Unit,
+                      disabled: Observable[Boolean] = just(false)
                      ) extends UiComponent {
 
     private val selectedItems = behaviorSubject[Seq[TopicInfoRec]](Seq())
-    selection <<< selectedItems.mapSeq(x => x._1)
+    selection <<< selectedItems.mapSeq((x: TopicInfoRec) => x._1)
 
     val menu: Observable[Seq[UiMenuItem]] =
-        Observable.merge[Any](Seq(paneData.messageTypes, selectedItems)).withLatestFrom(paneData.messageTypes, selectedItems)
+        Observable.merge[Any](Seq(topicsMgmt.messageTypes, selectedItems)).withLatestFrom(topicsMgmt.messageTypes, selectedItems)
                 .map { case (_, types, sel) => Seq[UiMenuItem](
-                    UiMenuItem("Refresh topics", onSelect = paneData.onRequestRefresh),
+                    UiMenuItem("Refresh topics", onSelect = topicsMgmt.onRequestRefresh),
                     UiMenuItem(text = "Change Message Type", subitems =
-                            types.map(t => UiMenuItem(text = t.display, onSelect = () => paneData.onApplyMessageType(sel.map(_._1) -> t))) :+
-                                    UiMenuItem(text = "Manage Message Types and Settings...", onSelect = paneData.onManageMessageTypes)))
+                            types.map(t => UiMenuItem(text = t.display, onSelect = () => topicsMgmt.onApplyMessageType(sel.map(_._1) -> t))) :+
+                                    UiMenuItem(text = "Manage Message Types and Settings...", onSelect = topicsMgmt.onManageMessageTypes)))
                 }
 
     override def content(): UiWidget = UiTable[TopicInfoRec]("grow",
-        items = paneData.topicsList.map(SetList(_)),
+        items = topicsList.map(SetList(_)),
         selection = selectedItems,
         onDblClick = Some(rec => onTopicDblClick(rec._1)),
         columns = Seq[UiColumn[TopicInfoRec]](
             UiColumn("topic", v => v._1),
             UiColumn("records", v => v._2.toString),
             UiColumn("type", v => v._3.map(_.display))),
-        menu = menu
+        menu = menu,
+        disabled = disabled
     )
 
 }
@@ -133,12 +137,12 @@ class TopicsTablePane(val layoutData: String,
 class LoggingPane(val layoutData: String,
                   loggingConsumer: ConsumerConnection,
                   filters: BehaviorSubject[Seq[(String, Seq[String])]],
-                  topicsData: KafkaConnTopicsData,
+                  topicsList: Observable[Seq[TopicInfoRec]],
+                  topicsMgmt: KafkaTopicsMgmt,
                   typesRegistry: TypesRegistry,
                   closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
 
     private val consumer = loggingConsumer
-    private val topicsWithSizes: Observable[TopicsWithSizes] = topicsData.topicsList.mapSeq(x => (x._1, x._2))
 
     private val filterTopicsToAdd = behaviorSubject("")
 
@@ -146,29 +150,30 @@ class LoggingPane(val layoutData: String,
     private val addTopics = publishSubject[Unit]()
 
     private val listeningTopics = behaviorSubject[Seq[String]](Seq())
-    private val listeningTopicsInfos = Observable.combineLatest(topicsWithSizes, listeningTopics)
-            .map { case (topicInfos, topicNames) => topicInfos.filter(topicInfo => topicNames.contains(topicInfo._1)) }
+    private val listeningTopicsInfo: Observable[Seq[TopicInfoRec]] = Observable.combineLatest(topicsList, listeningTopics)
+            .map { case (topics, topicNames) => topics.filter(topicInfo => topicNames.contains(topicInfo._1)) }
 
-    private val topicsToRemove = publishSubject[Seq[String]]()
-    private val removeTopics = publishSubject[Unit]()
-
-    private val logger: Observable[Seq[BinaryTopicRecord]] = consumer.readTopicsContinually(listeningTopicsInfos.mapSeq(x => x._1).asPublishSubject)
+    private val logger: Observable[Seq[BinaryTopicRecord]] = consumer.readTopicsContinually(listeningTopics)
             .subscribeOn(Schedulers.newThread())
             .observeOn(uiRenderer.uiScheduler())
             .filter(_ => !closed)
             .asPublishSubject
 
-    private val shownTopicsToAdd: Observable[TopicsWithSizes] =
-        Observable.combineLatest(topicsWithSizes, filterTopicsToAdd, listeningTopics)
-                .map(v => v._1
-                        .filter(x => x._1.toUpperCase.contains(v._2.toUpperCase))
-                        .diff(v._3))
+    private val shownTopicsToAdd: Observable[Seq[TopicInfoRec]] =
+        Observable.combineLatest(topicsList, filterTopicsToAdd, listeningTopics)
+                .map { case (topics, filter, listeningNames) =>
+                    topics.filter(_._1.toUpperCase().contains(filter.toUpperCase()))
+                            .filterNot(topicInfo => listeningNames.contains(topicInfo._1))
+                }
+
+    private val topicsToRemove = publishSubject[Seq[String]]()
+    private val removeTopics = publishSubject[Unit]()
 
     for (topicsToAdd <- addTopics.withLatestFrom(topicsToAdd).map(_._2)) listeningTopics << (listeningTopics.value ++ topicsToAdd)
 
     for (topics <- removeTopics.withLatestFrom(topicsToRemove).map(_._2)) listeningTopics << (listeningTopics.value diff topics)
 
-    private val refreshData: Observable[Unit] = topicsData.topicsList.mapSeq(_._3)
+    private val refreshData: Observable[Unit] = topicsList.mapSeq(_._3)
             .flatMap((msgTypes: Seq[Observable[MessageType]]) => Observable.merge(msgTypes))
             .map(_ => Unit)
 
@@ -178,7 +183,7 @@ class LoggingPane(val layoutData: String,
                     UiPanel("", Grid(), items = Seq(
                         UiLabel(text = "Add topics to Lister contiually"),
                         new PreFilterPane[String]("growx", currentSelectedItems = listeningTopics,
-                            allItems = topicsWithSizes.mapSeq(_._1),
+                            allItems = topicsList.mapSeq(_._1),
                             applySelectedItems = listeningTopics <<,
                             filters = filters),
                         UiSplitPane("grow", proportion = 50, orientation = UiVert, els = (
@@ -186,7 +191,8 @@ class LoggingPane(val layoutData: String,
                                     UiLabel(text = "Type to filter"),
                                     UiText("growx", text = filterTopicsToAdd),
                                     new TopicsTablePane("grow",
-                                        paneData = topicsData,
+                                        topicsList = shownTopicsToAdd,
+                                        topicsMgmt = topicsMgmt,
                                         selection = topicsToAdd,
                                         onTopicDblClick = _ => addTopics << Unit),
                                     UiButton("growx", text = "Add topics to listen", addTopics)
@@ -194,7 +200,8 @@ class LoggingPane(val layoutData: String,
                                 UiPanel("", Grid(), items = Seq(
                                     UiLabel(text = "Currently listening topics"),
                                     new TopicsTablePane("grow",
-                                        paneData = topicsData,
+                                        topicsList = listeningTopicsInfo,
+                                        topicsMgmt = topicsMgmt,
                                         selection = topicsToRemove,
                                         onTopicDblClick = _ => removeTopics << Unit),
                                     UiButton("growx", text = "Remove topic from listening", onAction = removeTopics)
@@ -209,12 +216,15 @@ class LoggingPane(val layoutData: String,
 
 class ReadTopicPane(
                            val layoutData: String = "",
-                           consumer: ConsumerConnection,
-                           topicsData: KafkaConnTopicsData,
+                           masterCon: ConsumerConnection,
+                           readCon: ConsumerConnection,
+                           topicsList: Observable[Seq[TopicInfoRec]],
+                           topicsMgmt: KafkaTopicsMgmt,
                            typesRegistry: TypesRegistry,
                            closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
 
     type TopicInfo = (String, Long, MessageType)
+    type TopicToSize = (String, Long)
 
     private val sizeToRead = Seq("All", "100", "1k", "10k", "100k")
     private val sizeToReadSelection = behaviorSubject(sizeToRead.head)
@@ -225,18 +235,16 @@ class ReadTopicPane(
         case x if isNumber(x) => x.toLong
         case _ => 0L
     }
-    private val topicsWithSizes = topicsData.topicsList.mapSeq(x => (x._1, x._2))
     private val topicsFilter = behaviorSubject[String]("")
-    private val topicWithSizes = combineLatest(topicsWithSizes, topicsFilter)
-            .map { case (allTopics, filter) => allTopics.filter(t => t._1.toUpperCase.contains(filter.toUpperCase)) }
+    private val shownTopics: Observable[Seq[TopicInfoRec]] = Observable.combineLatest(topicsList, topicsFilter)
+            .map { case (topics, filter) => topics.filter(_._1.toUpperCase.contains(filter.toUpperCase)) }
 
-    private val selectedTopics = publishSubject[Seq[String]]()
     private val openSelectedTopic = behaviorSubject[String]()
     private val records: Subject[LoggingOp[BinaryTopicRecord]] = publishSubject()
     private val progress: Subject[String] = publishSubject()
     private val onStop: Subject[Unit] = publishSubject()
     private val operationRunning = behaviorSubject(false)
-    private val refreshData: Observable[Unit] = topicsData.topicsList.mapSeq((x: TopicInfoRec) => x._3.map(f => (x._1, f)))
+    private val refreshData: Observable[Unit] = topicsList.mapSeq((x: TopicInfoRec) => x._3.map(f => (x._1, f)))
             .flatMap((msgTypes: Seq[Observable[(String, MessageType)]]) => Observable.merge(msgTypes))
             .withLatestFrom(openSelectedTopic)
             .filter { case ((topic, format), openedTopic) => topic == openedTopic }
@@ -247,7 +255,7 @@ class ReadTopicPane(
         records << ResetLogOp()
         operationRunning onNext true
         val recordsSeqs: Observable[Seq[BinaryTopicRecord]] =
-            consumer.readTopic(topic, sizeToReadCurrent)(progress, stop = onStop)
+            readCon.readTopic(topic, sizeToReadCurrent)(progress, stop = onStop)
         readTrackedRecords(recordsSeqs)
     }
     for (recordsList <- currentRecords) records << AppendLogOp(recordsList)
@@ -255,7 +263,7 @@ class ReadTopicPane(
     private val onNextRead: Subject[Unit] = publishSubject()
     for (_ <- onNextRead) if (currentRecords != null && !operationRunning.value) {
         operationRunning onNext true
-        val records = consumer.readNextRecords()(progress, stop = onStop)
+        val records = readCon.readNextRecords()(progress, stop = onStop)
         readTrackedRecords(records)
     }
 
@@ -278,9 +286,10 @@ class ReadTopicPane(
                         UiText("growx", text = topicsFilter),
                         UiLabel(text = "Read topic by double click"),
                         new TopicsTablePane("grow",
-                            paneData = topicsData,
-                            selection = publishSubject(),
-                            onTopicDblClick = openSelectedTopic <<
+                            topicsList = shownTopics,
+                            topicsMgmt = topicsMgmt,
+                            onTopicDblClick = openSelectedTopic <<,
+                            disabled = operationRunning
                         )
                     )),
                     UiPanel("", Grid(), items = Seq(

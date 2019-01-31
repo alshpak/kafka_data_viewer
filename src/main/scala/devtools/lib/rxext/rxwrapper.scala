@@ -6,8 +6,8 @@ import io.reactivex.disposables.Disposable
 import io.reactivex.subjects.{BehaviorSubject => JBehaviorSubject, PublishSubject => JPublishSubject, Subject => JSubject}
 import io.reactivex.{ObservableOnSubscribe, ObservableSource, Scheduler, functions, Observable => JObservable}
 
-import scala.language.implicitConversions
 import scala.collection.JavaConverters._
+import scala.language.implicitConversions
 
 trait Observable[T] {
 
@@ -17,9 +17,10 @@ trait Observable[T] {
 
     def map[R](f: T => R): Observable[R] = wrapped.map[R](x => f(x))
 
-    def flatMap[R](f: T => Observable[R]): Observable[R] = wrapped.flatMap(new functions.Function[T, JObservable[R]] {
-        override def apply(t: T): JObservable[R] = f(t).wrapped
-    })
+    def flatMap[R](f: T => Observable[R]): Observable[R] = {
+        val fun: functions.Function[T, JObservable[R]] = (t: T) => f(t).wrapped
+        wrapped.flatMap(fun)
+    }
 
     def subscribe(f: T => Unit): Disposable = wrapped.subscribe(x => f(x))
 
@@ -43,6 +44,8 @@ trait Observable[T] {
     def doOnComplete(onComplete: () => Unit): Observable[T] = wrapped.doOnComplete(() => onComplete())
 
     def asPublishSubject: Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< this; subject }
+
+
 }
 
 trait Subject[T] extends Observable[T] {
@@ -92,16 +95,6 @@ object Observable {
         val value: JObservable[T] = JObservable.merge(iterable)
         Observable(value)
     }
-
-    //    def combineLatestUsing[T1, T2, R](t1: Observable[T1], t2: Observable[T2])(combine: (T1, T2) => R): Observable[R] =
-    //        JObservable.combineLatest(t1, t2, (e1: T1, e2: T2) => combine(e1, e2))
-    //
-    //
-    //    def combineLatestUsing[T1, T2, T3, R](t1: ObservableSource[T1], t2: ObservableSource[T2], t3: ObservableSource[T3])(combine: (T1, T2, T3) => R): Observable[R] =
-    //        Observable.combineLatest(t1, t2, t3, new io.reactivex.functions.Function3[T1, T2, T3, R]() {
-    //            override def apply(t1: T1, t2: T2, t3: T3): R = combine(t1, t2, t3)
-    //        })
-    //
 
     implicit def _JObservableConvert[T](wrapped: JObservable[T]): Observable[T] = Observable(wrapped)
 }

@@ -3,8 +3,8 @@ package devtools.lib.rxui
 import devtools.lib.rxext.ListChangeOps.ListChangeOp
 import devtools.lib.rxext.Observable.{empty, just}
 import devtools.lib.rxext.{Observable, Subject}
+import devtools.lib.rxui.UiImplicits._
 import io.reactivex.Scheduler
-import UiImplicits._
 
 import scala.language.implicitConversions
 
@@ -51,11 +51,12 @@ case class UiCombo(layoutData: String = "",
 
 case class UiLink(layoutData: String = "",
                   text: Observable[String] = empty(),
-                  onAction: Option[Subject[Unit]] = None) extends UiWidget
+                  onAction: Option[Subject[Unit]] = None,
+                  disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiButton(layoutData: String = "",
                     text: Observable[String] = empty(),
-                    onAction: ()  => Unit = () => Unit,
+                    onAction: () => Unit = () => Unit,
                     disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiColumn[T](
@@ -126,7 +127,7 @@ object UiImplicits {
 
     implicit def subjectTo1ArgConsumer[T](s: Subject[T]): Some[T => Unit] = Some(x => s << x)
 
-//    implicit def consumerToSome(f: () => Unit): Option[() => Unit] = Some(f)
+    //    implicit def consumerToSome(f: () => Unit): Option[() => Unit] = Some(f)
 
     //    implicit def asSubject[T](o: Observable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< o; subject }
     //

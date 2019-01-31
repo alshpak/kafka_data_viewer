@@ -51,8 +51,6 @@ object Counter {
 class KafkaConsumerConnection(host: String,
                               groupName: String) extends ConsumerConnection {
 
-    val counter = Counter.counter.incrementAndGet()
-
     private val consumerProps = Map(
         "bootstrap.servers" -> host
         , "group.id" -> groupName
@@ -121,7 +119,6 @@ class KafkaConsumerConnection(host: String,
         }
 
         Observable.create(obs => operation {
-            //val sync = new Object()
 
             assignToTopics(Seq())
             var assignment = Seq[String]()
@@ -134,13 +131,16 @@ class KafkaConsumerConnection(host: String,
                 assignment = newTopics
             }
 
-            val nextRecords: Unit => Seq[GenRecord] = _ =>
+            val nextRecords: Unit => Seq[GenRecord] = _ => {
+                println("Next records attempt")
                 if (assignment.isEmpty) {Thread.sleep(1000); Seq() }
                 else consumer.poll(1000).asScala.toSeq
+            }
 
             for (records <- Stream.continually(reassign.andThen(nextRecords)(getNewTopics())).takeWhile(_ => !closed))
                 obs onNext (records map buildBinaryRecord)
 
+            obs onComplete()
         })
     }
 

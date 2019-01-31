@@ -36,6 +36,17 @@ object FxRender {
         })
     }
 
+    def linkBidirMultiSelection[T](obs: Subject[Seq[T]], selection: MultipleSelectionModel[T], applyOnSelection: Seq[T] => Unit): Unit = {
+        for (items <- obs; if items != selection.getSelectedItems.asScala) {
+            selection.clearSelection()
+            for (item <- items) selection.select(item)
+            applyOnSelection(items)
+        }
+        selection.getSelectedItems.addListener(new ListChangeListener[T] {
+            override def onChanged(c: ListChangeListener.Change[_ <: T]): Unit = obs << selection.getSelectedItems.asScala.toList
+        })
+    }
+
     def linkBidirSingleSelect[T](obs: Subject[T], selection: SelectionModel[T]): Unit = {
         for (item <- obs; if item != selection.getSelectedItem) selection.select(item)
         selection.selectedItemProperty().addListener(new ChangeListener[T] {
@@ -134,6 +145,7 @@ object FxRender {
     class UiComboRenderer(combo: UiCombo) extends Renderer[ComboBox[String]] {
         override def render(): ComboBox[String] = {
             val c = new ComboBox[String]()
+            for (disabled <- combo.disabled) c.setDisable(disabled)
             for (items <- combo.items) {
                 val selection = c.getSelectionModel.getSelectedItem
                 c.getItems.clear()
@@ -151,6 +163,7 @@ object FxRender {
     class UiLinkRenderer(link: UiLink) extends Renderer[Button] {
         override def render(): Button = {
             val c = new Button()
+            for (disabled <- link.disabled) c.setDisable(disabled)
             for (obs <- link.onAction) c.onActionProperty().addListener((_: EventHandler[ActionEvent], _: EventHandler[ActionEvent]) => obs << Unit)
             for (text <- link.text) c.setText(text)
             c
@@ -160,6 +173,7 @@ object FxRender {
     class UiButtonRenderer(button: UiButton) extends Renderer[Button] {
         override def render(): Button = {
             val c = new Button()
+            for (disabled <- button.disabled) c.setDisable(disabled)
             c.setOnAction((event: ActionEvent) => button.onAction())
             for (text <- button.text) c.setText(text)
             c
@@ -169,6 +183,7 @@ object FxRender {
     class UiTableRenderer[T](tableModel: UiTable[T]) extends Renderer[TableView[T]] {
         override def render(): TableView[T] = {
             val c = new TableView[T]()
+            for (disabled <- tableModel.disabled) c.setDisable(disabled)
             c.getSelectionModel.setSelectionMode(SelectionMode.MULTIPLE)
 
             for (columns <- tableModel.columns) {
@@ -198,7 +213,11 @@ object FxRender {
                 case RemoveItemObjs(items) => c.getItems.removeAll(items: _*)
             }
 
-            for (selection <- tableModel.selection) linkBidirMultiSelection(selection, c.getSelectionModel)
+            for (selection <- tableModel.selection) {
+                linkBidirMultiSelection(selection, c.getSelectionModel, (selectedItems: Seq[T]) => {
+                    if (selectedItems.size == 1) c.scrollTo(selectedItems.head)
+                })
+            }
 
             for (handler <- tableModel.onDblClick) c.setOnMouseClicked((event: MouseEvent) =>
                 if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY)
@@ -208,25 +227,24 @@ object FxRender {
                 if (itemModel.subitems.isEmpty) applying(new MenuItem(itemModel.text)) { item => item.setOnAction { evt => parent.hide(); evt.consume(); itemModel.onSelect(); } }
                 else applying(new Menu(itemModel.text)) { item => item.getItems.addAll(itemModel.subitems.map(menuToItems(parent)).asJavaCollection) }
 
-            var prevMenu: Option[ContextMenu] = None
             for (menuItems <- tableModel.menu; if menuItems.nonEmpty) {
                 val ctxMenuRoot = applying(new ContextMenu()) { cm =>
                     cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
                 }
                 c.setContextMenu(ctxMenuRoot)
             }
-//                for (selection <- Option(c.getSelectionModel.getSelectedItem)) {
-//                    val ctxMenuRoot = applying(new ContextMenu()) { cm =>
-//                        cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
-//                    }
-//                    c.setContextMenu(ctxMenuRoot)
-                    //prevMenu = Some(ctxMenuRoot)
-                    //c.getScene.getRoot.setCon
-                    //ctxMenuRoot.show(c, event.getScreenX, event.getScreenY)
-//                }
-//            c.setOnContextMenuRequested { event: ContextMenuEvent =>
-//                    for (prevMenu <- prevMenu) prevMenu.hide()
-//                }
+            //                for (selection <- Option(c.getSelectionModel.getSelectedItem)) {
+            //                    val ctxMenuRoot = applying(new ContextMenu()) { cm =>
+            //                        cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
+            //                    }
+            //                    c.setContextMenu(ctxMenuRoot)
+            //prevMenu = Some(ctxMenuRoot)
+            //c.getScene.getRoot.setCon
+            //ctxMenuRoot.show(c, event.getScreenX, event.getScreenY)
+            //                }
+            //            c.setOnContextMenuRequested { event: ContextMenuEvent =>
+            //                    for (prevMenu <- prevMenu) prevMenu.hide()
+            //                }
 
             c
         }
@@ -235,6 +253,7 @@ object FxRender {
     class UiTreeRenderer[T](treeModel: UiTree[T]) extends Renderer[TreeTableView[T]] {
         override def render(): TreeTableView[T] = {
             val treeTable = new TreeTableView[T]()
+            for (disabled <- treeModel.disabled) treeTable.setDisable(disabled)
 
             for (columns <- treeModel.columns) {
                 treeTable.getColumns.addAll(columns.map(colModel => applying(new TreeTableColumn[T, String]()) { col =>
@@ -415,6 +434,7 @@ object FxRender {
                 for (content <- tabModel.content) tab.setContent(renderers.renderer(content).render())
                 tab.setClosable(tabPanelModel.closeable)
                 itemsToContent += itemModel -> tab
+                tab.setOnClosed { _ => tabPanelModel.onClose(itemModel) }
                 tab
             }.asJavaCollection
             for (itemsOp <- tabPanelModel.tabs) itemsOp match {

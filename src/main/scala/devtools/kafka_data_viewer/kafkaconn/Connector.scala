@@ -21,6 +21,22 @@ object Connector {
 
     type TopicsWithSizes = Seq[(String, Long)]
 
+    trait MetadataConnection {
+
+    }
+
+    trait LoggingConnection {
+
+        def readTopicsContinually(topics: Observable[Seq[String]]): Observable[Seq[BinaryTopicRecord]]
+
+    }
+
+    trait ReadConnection {
+
+        def readTopic(topic: String, limitPerPartition: Long)(executionMonitor: Option[Subject[String]] = None, stop: Option[Observable[Unit]] = None): Observable[Seq[BinaryTopicRecord]]
+
+    }
+
     trait ConsumerConnection {
 
         def queryTopicPartitions(topic: String): Seq[Int]
