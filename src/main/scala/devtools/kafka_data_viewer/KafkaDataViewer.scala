@@ -382,7 +382,7 @@ object KafkaDataViewer {
         withres(new FileWriter(appProps))(settingsYaml.dump(settings, _))
 
         val connections = behaviorSubject[Seq[ConnectionDefinition]](
-            settings.get("connections").asInstanceOf[java.util.List[java.util.Map[String, Object]]].asScala
+            Option(settings.get("connections")).getOrElse(new util.ArrayList()).asInstanceOf[java.util.List[java.util.Map[String, Object]]].asScala
                     .map(condef => ConnectionDefinition(
                         name = condef.getOrDefault("name", condef.get("host")).asInstanceOf[String],
                         kafkaHost = condef.get("host").asInstanceOf[String],

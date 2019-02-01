@@ -1,12 +1,1 @@
 connections:
-  - host: kafka-01-uat-04.privalia.aws:9092
-    avro: http://avro
-    zoo: zoo
-  - host: kafka-01-int-01.privalia.aws:9092
-queues_settings:
-  binary:
-    - category_content*
-  registry:
-    - sacarinoOrderCreationTest*
-    - test-sacarino-to-uc-seller-event-import-success-value*
-    - privalia.caramelo-oms.commercial-order-uc*
