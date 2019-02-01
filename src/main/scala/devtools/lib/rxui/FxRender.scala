@@ -562,6 +562,11 @@ object FxRender {
             for (x <- close) x << {}
         }
 
+        override def alert(alertType: AlertType, message: String): Unit = {
+            val alert = new Alert(Alert.AlertType.ERROR, message)
+            alert.showAndWait()
+        }
+
     }
 
     implicit case object DefaultFxRenderes extends FxRenderers {

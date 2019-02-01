@@ -60,7 +60,7 @@ task fatJar(type: Jar) {
     manifest {
         attributes 'Implementation-Title': 'Kafka Data Viewer full pack',
                 'Implementation-Version': version,
-                'Main-Class': 'epam.devtools.appmonitor.montool.MonToolMain'
+                'Main-Class': 'devtools.kafka_data_viewer.KafkaDataViewer'
     }
     baseName = project.name + '-all'
     from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }

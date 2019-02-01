@@ -76,7 +76,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
     }
 
     for ((connectTo, connectedList) <- onConnect.withLatestFrom(connected); if !connectedList.exists(connectTo ==)) {
-        val connectionSubject = publishSubject[Option[ConnHandle]]()
+        val connectionSubject = publishSubject[Option[Either[String, ConnHandle]]]()
         val cancelConnection = publishSubject[Unit]()
         val topicSettings = behaviorSubject(connectTo.topicSettings)
         val connThread = new Thread(() =>
@@ -85,24 +85,31 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                 val topicsAndSizes = connSet.master.queryTopicsWithSizes()
 
                 connectionSubject <<
-                        Some(new ConnHandle(connDef = connectTo,
+                        Some(Right(new ConnHandle(connDef = connectTo,
                             connSet = connSet,
                             initTopicsAndSizes = topicsAndSizes,
                             topicSettingsHndl = topicSettings
-                        ))
+                        )))
             } catch {
-                case _: InterruptException => println("Connection is interrupted")
-                case e: Exception => e.printStackTrace()
+                case _: InterruptException =>
+                case e: Exception =>
+                    println("Error on connection")
+                    e.printStackTrace()
+                    connectionSubject << Some(Left(e.getMessage))
             })
         connThread.start()
         for (_ <- cancelConnection) {connectionSubject << None; connectionSubject onComplete(); connThread.interrupt() }
 
-        val connectionDone = connectionSubject.observeOn(uiRenderer.uiScheduler())
+        val connectionDone: Observable[Option[Either[String, ConnHandle]]] = connectionSubject.observeOn(uiRenderer.uiScheduler())
 
-        for (connectResult <- connectionDone; connHndl <- connectResult) {
-            connectOps << AddItems(Seq(connHndl))
-            for (topicSettings <- topicSettings) {
-                connections << connections.value.map(connDef => if (connDef.name == connectTo.name) connDef.copy(topicSettings = topicSettings) else connDef)
+        for (connectResultOpt <- connectionDone; connectResult <- connectResultOpt) {
+            connectResult match {
+                case Right(connHndl) =>
+                    connectOps << AddItems(Seq(connHndl))
+                    for (topicSettings <- topicSettings) {
+                        connections << connections.value.map(connDef => if (connDef.name == connectTo.name) connDef.copy(topicSettings = topicSettings) else connDef)
+                    }
+                case Left(error) => uiRenderer.alert(ErrorAlert, "Connection in cancelled; " + error)
             }
         }
 
@@ -230,7 +237,7 @@ class KafkaManageMessageTypesPane(val layoutData: String = "",
                 multiSelect = false
             ),
             UiPanel("growx", Grid("cols 2"), items = Seq(
-                UiButton(text = "Add", onAction = addNewServer),
+                UiButton(text = "Add", onAction = () => addNewServer() ),
                 UiButton(text = "Remove", onAction = onRemove)
             ))
         ))
@@ -288,7 +295,7 @@ class KafkaConnectionPane(val layoutData: String = "",
     private val topicsData = KafkaTopicsMgmt(
         messageTypes = messageTypes,
         onApplyMessageType = applyMessageTypes <<,
-        onManageMessageTypes = manageMessageTypes,
+        onManageMessageTypes = manageMessageTypes _,
         onRequestRefresh = refreshTopics
     )
 

@@ -12,6 +12,10 @@ trait UiWidget {val layoutData: String}
 
 trait Layout
 
+sealed trait AlertType
+
+case object ErrorAlert extends AlertType
+
 case class Grid(markup: String = "") extends Layout
 
 case class UiMenu(items: Seq[UiMenuItem])
@@ -146,6 +150,8 @@ trait UiRenderer {
     def runApp(root: UiWidget): Unit
 
     def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit
+
+    def alert(alertType: AlertType, message: String): Unit
 
     def uiScheduler(): Scheduler
 }
