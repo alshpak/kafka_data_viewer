@@ -1,6 +1,7 @@
 package devtools.kafka_data_viewer.kafkaconn
 
-import java.time.Instant
+import java.time.Duration.ofSeconds
+import java.time.{Duration, Instant}
 import java.util
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
@@ -70,17 +71,19 @@ class KafkaConsumerConnection(host: String,
     private val consumer = new KafkaConsumer[Array[Byte], Array[Byte]]((consumerProps: Map[String, Object]).asJava)
 
     override def queryTopics(): Seq[String] = operation {
+        println("Query topics")
         consumer.listTopics().asScala.filterNot(_._1.startsWith("_")).keys.toSeq.sorted
     }
 
     override def queryTopicsWithSizes(): Seq[(String, Long)] = operation {
+        println("Query topics with sizes")
         val allTopics: mutable.Map[String, util.List[PartitionInfo]] = consumer.listTopics().asScala
         val topics = allTopics.filterNot(_._1.startsWith("_"))
         val topicPartitions: Seq[TopicPartition] = topics.values.flatMap(x => x.asScala)
                 .map(info => new TopicPartition(info.topic(), info.partition())).toSeq
         val beginnings = consumer.beginningOffsets(topicPartitions.asJava).asScala.toMap
         val endings = consumer.endOffsets(topicPartitions.asJava).asScala.toSeq
-        val sizes = endings.map { case (ref, end) => ref -> (end - beginnings(ref)) }
+        val sizes = endings.map { case (ref, end) => ref -> (end - beginnings.getOrElse(ref, end)) }
         val result = sizes.foldLeft(Map[String, Long]())((acc, el) => acc + (el._1.topic() -> (el._2 + acc.getOrElse(el._1.topic(), 0L)))).toSeq
         result.sortBy(_._1)
     }
@@ -89,11 +92,12 @@ class KafkaConsumerConnection(host: String,
         BinaryTopicRecord(topic = r.topic(), partition = r.partition(), offset = r.offset(), time = Instant.ofEpochMilli(r.timestamp()), key = r.key(), value = r.value())
 
     override def readNextRecords()(executionMonitor: Option[Subject[String]], stop: Option[Observable[Unit]]): Observable[Seq[BinaryTopicRecord]] = {
+        println("read next topics")
         var read = 0
         var stopped = false
         for (stopAction <- stop; _ <- stopAction) stopped = true
         Observable.create(obs => operation {
-            for (recs <- Stream.continually(consumer.poll(3000)).takeWhile(!_.isEmpty && !stopped)) {
+            for (recs <- Stream.continually(consumer.poll(ofSeconds(3))).takeWhile(!_.isEmpty && !stopped)) {
                 val records = recs.asScala.toSeq
                 read += records.size
                 for (mon <- executionMonitor) mon onNext ("Read " + read)
@@ -131,11 +135,10 @@ class KafkaConsumerConnection(host: String,
                 assignment = newTopics
             }
 
-            val nextRecords: Unit => Seq[GenRecord] = _ => {
-                println("Next records attempt")
+            val nextRecords: Unit => Seq[GenRecord] = _ =>
                 if (assignment.isEmpty) {Thread.sleep(1000); Seq() }
-                else consumer.poll(1000).asScala.toSeq
-            }
+                else consumer.poll(ofSeconds(1)).asScala.toSeq
+
 
             for (records <- Stream.continually(reassign.andThen(nextRecords)(getNewTopics())).takeWhile(_ => !closed))
                 obs onNext (records map buildBinaryRecord)
@@ -145,6 +148,7 @@ class KafkaConsumerConnection(host: String,
     }
 
     override def readTopic(topic: String, limitPerPartition: Long)(executionMonitor: Option[Subject[String]], stop: Option[Observable[Unit]]): Observable[Seq[BinaryTopicRecord]] = {
+        println("read topics")
         val partitions: Seq[PartitionInfo] = consumer.listTopics().asScala.find(_._1 == topic).get._2.asScala
         val topicPartitions = partitions.map(info => new TopicPartition(info.topic(), info.partition()))
 
@@ -163,7 +167,7 @@ class KafkaConsumerConnection(host: String,
         var stopped = false
         for (stopAction <- stop; _ <- stopAction) stopped = true
         Observable.create(obs => operation {
-            for (recs <- Stream.continually(consumer.poll(3000)).takeWhile(!_.isEmpty && !stopped)) {
+            for (recs <- Stream.continually(consumer.poll(ofSeconds(3))).takeWhile(!_.isEmpty && !stopped)) {
                 val records = recs.asScala.toSeq
                 read += records.size
                 for (mon <- executionMonitor) mon onNext ("Read " + read + " of " + totalCount)
@@ -180,12 +184,14 @@ class KafkaConsumerConnection(host: String,
     }
 
     override def close(): Unit = {
+        println("close")
         closed = true
         opSemaphore.acquire()
         consumer.close()
     }
 
     override def queryTopicPartitions(topic: String): Seq[Int] = {
+        println("query topic partitions")
         consumer.partitionsFor(topic).asScala.map(_.partition()).sorted
     }
 
@@ -197,15 +203,20 @@ class KafkaProducerConnection(host: String,
     private val producerProps = Map(
         ProducerConfig.BOOTSTRAP_SERVERS_CONFIG -> host,
         ProducerConfig.ACKS_CONFIG -> "all",
-        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG -> classOf[StringSerializer].getName,
+        ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG -> classOf[ByteArraySerializer].getName,
         ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG -> classOf[ByteArraySerializer].getName,
         ProducerConfig.PARTITIONER_CLASS_CONFIG -> classOf[DelegatingPartitioner].getName)
 
     private val producer = new KafkaProducer[Array[Byte], Array[Byte]]((producerProps: Map[String, Object]).asJava)
 
     override def send(topic: String, key: Array[Byte], value: Array[Byte], partition: PartitionerMode): Unit = {
+        try {
+        println("Try to send message!")
         CustomPartitioner.partitionMode = partition
         producer.send(new ProducerRecord(topic, key, value))
+        } catch {
+            case e: Exception => e.printStackTrace()
+        }
     }
 
     override def close(): Unit = producer.close()

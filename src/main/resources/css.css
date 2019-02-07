@@ -1,3 +1,14 @@
 .split-pane *.split-pane-divider {
-    -fx-padding: 0 0 0 0;
+    -fx-padding: 1;
+    -fx-background-color: transparent;
+
+}
+
+.split-pane {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.tab-pane *.tab-header-background  {
+    // -fx-background-color: transparent;
 }

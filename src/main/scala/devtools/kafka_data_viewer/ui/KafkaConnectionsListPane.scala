@@ -19,16 +19,16 @@ class KafkaConnectionsListPane(val layoutData: String = "",
     private val connSelected = behaviorSubject(Seq[ConnectionDefinition]())
 
     for (_ <- onAdd) {
-        val applyHandle = publishSubject[ConnectionDefinition]()
+        val applyHandle = publishSubject[Unit]()
         val closeHandle = publishSubject[Unit]()
-        for (conn <- applyHandle) connections << (connections.value :+ conn)
-        uiRenderer.runModal(new ConfigureConnectionWindow("", ConnectionDefinition("", "", ""), applyHandle, closeHandle))
+        val newConnection = ConnectionDefinition()
+        for (conn <- applyHandle) connections << connections.value :+ newConnection
+        uiRenderer.runModal(new ConfigureConnectionWindow("", newConnection, applyHandle, closeHandle), close = closeHandle)
     }
 
     for (_ <- onChange; selectedCon <- connSelected.value.headOption) {
-        val applyHandle = publishSubject[ConnectionDefinition]()
+        val applyHandle = publishSubject[Unit]()
         val closeHandle = publishSubject[Unit]()
-        for (conn <- applyHandle) connections << (connections.value :+ conn).filterNot(selectedCon ==)
         uiRenderer.runModal(new ConfigureConnectionWindow("", selectedCon, applyHandle, closeHandle), close = closeHandle)
     }
 
@@ -50,25 +50,24 @@ class KafkaConnectionsListPane(val layoutData: String = "",
 class ConfigureConnectionWindow(
                                        val layoutData: String = "",
                                        conn: ConnectionDefinition,
-                                       onApply: Subject[ConnectionDefinition],
+                                       onApply: Subject[Unit],
                                        onClose: Subject[Unit]
                                ) extends UiComponent {
     private val onOk = publishSubject[Unit]()
     for (_ <- onOk) {
-        onApply onNext ConnectionDefinition(name = name.value, kafkaHost = host.value, zoo = zoo.value, topicSettings = conn.topicSettings)
+        conn.name << name.value
+        conn.kafkaHost << host.value
+        onApply onNext Unit
         onClose onNext Unit
     }
-    private val name = behaviorSubject(conn.name)
-    private val host = behaviorSubject[String](conn.kafkaHost)
-    private val zoo = behaviorSubject[String](Option(conn.zoo).getOrElse(""))
+    private val name = behaviorSubject(conn.name.value)
+    private val host = behaviorSubject[String](conn.kafkaHost.value)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("cols 2"), items = Seq(
         UiLabel(text = "Connection Name"),
         UiText("growx", text = name),
         UiLabel(text = "Kafka Host"),
         UiText("growx", text = host),
-        UiLabel(text = "Zoo Host"),
-        UiText("growx", text = zoo),
         UiPanel("colspan 2", Grid("cols 2"), items = Seq(
             UiButton(text = "Ok", onAction = onOk),
             UiButton(text = "Cancel", onAction = onClose)

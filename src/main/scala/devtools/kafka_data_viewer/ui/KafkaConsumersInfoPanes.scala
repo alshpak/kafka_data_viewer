@@ -52,17 +52,18 @@ class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinitio
     private val items = Seq(
         Some(
             Root("KafkaGroups",
-                queryGroups = () => KafkaGroupsInfo.getKafkaGroups(condef.kafkaHost).map(
-                    Group(_, name => KafkaGroupsInfo.describeKafkaGroup(condef.kafkaHost, name)
+                queryGroups = () => KafkaGroupsInfo.getKafkaGroups(condef.kafkaHost.value).map(
+                    Group(_, name => KafkaGroupsInfo.describeKafkaGroup(condef.kafkaHost.value, name)
                             .map(state => PartitionInfo(state)).sortBy(x => (x.name, x.partition))))
                         .sortBy(_.name),
-            )),
+            ))
+    )/*,
         Option(condef.zoo).filter(!_.isEmpty).map(zoo =>
             Root("ZooGroups",
                 queryGroups = () => KafkaGroupsInfo.getZooGroups(zoo).map(
                     Group(_, name => KafkaGroupsInfo.describeZooGroup(zoo, name)
                             .map(state => PartitionInfo(state)).sortBy(x => (x.name, x.partition)))).sortBy(_.name),
-            )))
+            )))*/
             .filter(_.isDefined).map(_.get)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(

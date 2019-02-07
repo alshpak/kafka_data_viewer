@@ -18,8 +18,8 @@ dependencies {
 
     compile 'io.reactivex.rxjava2:rxjava:2.2.2' // Apache 2
     
-    compile 'org.apache.kafka:kafka-clients:1.1.1' // Apache 2
-    compile 'org.apache.kafka:kafka_2.12:1.1.1' // Apache 2
+    compile 'org.apache.kafka:kafka-clients:2.1.0' // Apache 2
+    compile 'org.apache.kafka:kafka_2.12:2.1.0' // Apache 2
 
     compile 'org.apache.avro:avro:1.8.2' // Apache 2
     compile 'io.confluent:kafka-avro-serializer:3.3.2' //{ exclude group: 'org.slf4j' } // Apache 2

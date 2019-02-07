@@ -3,7 +3,8 @@ package devtools.kafka_data_viewer.ui
 import com.fasterxml.jackson.databind.ObjectMapper
 import devtools.lib.rxext.ListChangeOps.{AddItems, ListChangeOp, SetList}
 import devtools.lib.rxext.LoggableOps.{AppendLogOp, LoggingOp, ResetLogOp}
-import devtools.lib.rxext.Observable.just
+import devtools.lib.rxext.Observable.{combineLatest, just}
+import devtools.lib.rxext.ObservableSeqExt._
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
@@ -15,7 +16,7 @@ class PreFilterPane[T](val layoutData: String,
                        allItems: Observable[Seq[T]],
                        currentSelectedItems: Observable[Seq[T]],
                        applySelectedItems: Seq[T] => Unit,
-                       filters: BehaviorSubject[Seq[(String, Seq[T])]]
+                       filters: BehaviorSubject[Seq[(BehaviorSubject[String], BehaviorSubject[Seq[T]])]]
                       ) extends UiComponent {
 
     private val titleAll = "All"
@@ -28,25 +29,26 @@ class PreFilterPane[T](val layoutData: String,
     private val onSave = publishSubject[Unit]()
     private val onDelete = publishSubject[Unit]()
 
-    private val shownFilters = filters.map(titleAll +: titleNothing +: _.map(_._1))
+    private val shownFilters = filters.map(titleAll +: titleNothing +: _.map(_._1.value))
     private val allowActions = currentNameTrimmed.map(name => !name.isEmpty && !name.equals(titleAll) && !name.equals(titleNothing))
 
-    for (nameAndAllItems <- filterSelected.withLatestFrom(allItems)) applySelectedItems(nameAndAllItems match {
-        case (`titleAll`, all) => all
-        case (`titleNothing`, _) => Seq()
-        case (name, _) => filters.value.find(_._1 == name).get._2
-    })
+    for ((filterName, allItems, shownFilters) <- filterSelected.withLatestFrom(allItems, shownFilters)
+         if shownFilters.contains(filterName))
+        applySelectedItems(filterName match {
+            case `titleAll` => allItems
+            case `titleNothing` => Seq()
+            case name => filters.value.find(_._1.value == name).map(_._2.value).get
+        })
 
-    for (selectionWithName <- onSave.withLatestFrom(Observable.combineLatest(currentSelectedItems, currentNameTrimmed)).map(_._2))
-        if (!selectionWithName._2.isEmpty)
-            filters << filters.value.toMap.updated(selectionWithName._2, selectionWithName._1).toSeq.sortBy(_._1)
+    for ((selection, name) <- onSave.withLatestFrom(combineLatest(currentSelectedItems, currentNameTrimmed)).map(_._2); if name.nonEmpty)
+        filters << (filters.value.filterNot(_._1.value == name) :+ (behaviorSubject(name) -> behaviorSubject(selection)))
 
     for (name <- onDelete.withLatestFrom(currentNameTrimmed).map(_._2))
-        filters onNext filters.value.filterNot(_._1 == name)
+        filters << filters.value.filterNot(_._1.value == name)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(
         UiLabel("growx", text = just("Pre-filter\n - type name to save\n - select from list to use")),
-        UiPanel("growx", Grid("cols 3"), items = Seq(
+        UiPanel("growx", Grid("cols 3,margin 2"), items = Seq(
             UiCombo("growx", text = currentName, selection = filterSelected, items = shownFilters),
             UiButton(text = "Save", onAction = onSave, disabled = allowActions.map(!_)),
             UiButton(text = "Del", onAction = onDelete, disabled = allowActions.map(!_))
@@ -114,7 +116,7 @@ class SearchElementsPane[T](val layoutData: String,
         setCurrentSearchElement()
     }
 
-    override def content(): UiWidget = UiPanel(layoutData, Grid("cols 5"), items = Seq(
+    override def content(): UiWidget = UiPanel(layoutData, Grid("cols 5,margin 2"), items = Seq(
         UiLabel(text = "Search: "),
         UiText("growx", text = searchText),
         UiLabel("w 200", text = searchResultsLabel),
@@ -150,7 +152,7 @@ class SearchedTextDataPane(val layoutData: String,
     textSelection <<< selection.map(s => (s._2, s._2 + searchTextCurrent.value.length)) //.delay(1000, TimeUnit.MILLISECONDS).observeOn(swtScheduler())
 
     override def content(): UiWidget =
-        UiPanel(layoutData, Grid(), items = Seq(
+        UiPanel(layoutData, Grid("margin 2"), items = Seq(
             new SearchElementsPane[SearchElement]("growx",
                 elements = seachItems.map((_, true)),
                 selection = selection,
@@ -212,16 +214,16 @@ class TableOutputDataPane[T](val layoutData: String,
     private val fieldToCols = fields.map(field => FieldToColumn(title = field._1, data = field._2, onSort = if (sorting.isDefinedAt(field._1)) Some(publishSubject()) else None))
     for (f2c <- fieldToCols; onSort <- f2c.onSort; asc <- onSort) sortRecords(f2c.title, asc = asc)
 
-    override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(
+    override def content(): UiWidget = UiPanel(layoutData, Grid("margin 2"), items = Seq(
         new SearchElementsPane[T]("growx", cachedRecordsSubj, searchSelection, compare, searchText),
         UiSplitPane("grow", orientation = UiVert, proportion = 70, els = (
-                UiPanel("", Grid(), items = Seq[Option[UiWidget]](
+                UiPanel("", Grid("margin 2"), items = Seq[Option[UiWidget]](
                     UiTable[T]("grow",
                         items = displayRecords,
                         selection = selectedRecords,
                         columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc: Boolean) => f2c.onSort.get << asc))
                     ),
-                    onLoadNewData.map(_ => UiLink("growx", text = "<A>Click to read next portion of data</A>", onAction = onLoadNewData)))
+                    onLoadNewData.map(_ => UiLink("growx", text = "Click to read next portion of data", onAction = onLoadNewData)))
                         .filter(_.isDefined).map(_.get)),
                 UiTabPanel("grow", tabs = behaviorSubject(Seq(
                     UiTab(label = "Raw Output", content = new SearchedTextDataPane("grow", text = selectedRecordValue, defaultSearch = searchText)),
@@ -230,4 +232,26 @@ class TableOutputDataPane[T](val layoutData: String,
 
         ))
     ))
+}
+
+case class UiComboT[T](layoutData: String = "",
+                       items: Observable[Seq[T]] = Observable.empty[Seq[T]](),
+                       display: T => String,
+                       selection: Subject[T],
+                       disabled: Observable[Boolean] = false) extends UiComponent {
+    private val selectionTextList = items.mapSeq(display)
+    private val selectionText = behaviorSubject[String]("")
+    for (selection <- selection; text = display(selection); if text != selectionText.value) selectionText << text
+    for ((selectionText, items) <- selectionText.withLatestFrom(items)) {
+        val textToItems = items.map(x => display(x) -> x).toMap
+        if (textToItems.contains(selectionText))
+            selection << textToItems(selectionText)
+    }
+
+    override def content(): UiWidget = UiCombo(layoutData,
+        items = selectionTextList,
+        selection = selectionText,
+        disabled = disabled,
+        editable = false
+    )
 }

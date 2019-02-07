@@ -8,6 +8,7 @@ import io.reactivex.{ObservableOnSubscribe, ObservableSource, Scheduler, functio
 
 import scala.collection.JavaConverters._
 import scala.language.implicitConversions
+import Observable._
 
 trait Observable[T] {
 
@@ -35,6 +36,9 @@ trait Observable[T] {
     def withLatestFrom[T2, T3](source2: Observable[T2], source3: Observable[T3]): Observable[(T, T2, T3)] =
         wrapped.withLatestFrom[T2, T3, (T, T2, T3)](source2.wrapped, source3.wrapped, (t1: T, t2: T2, t3: T3) => (t1, t2, t3))
 
+    def withLatestFrom[T2, T3, T4](source2: Observable[T2], source3: Observable[T3], source4: Observable[T4]): Observable[(T, T2, T3, T4)] =
+        wrapped.withLatestFrom[T2, T3, T4, (T, T2, T3, T4)](source2.wrapped, source3.wrapped, source4.wrapped, (t1: T, t2: T2, t3: T3, t4: T4) => (t1, t2, t3, t4))
+
     def subscribeOn(scheduled: Scheduler): Observable[T] = wrapped.subscribeOn(scheduled)
 
     def observeOn(scheduler: Scheduler): Observable[T] = wrapped.observeOn(scheduler)
@@ -45,7 +49,7 @@ trait Observable[T] {
 
     def asPublishSubject: Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< this; subject }
 
-
+    def withCachedLatest(): Observable[T] = Observable[T] { val c = wrapped.replay(1); c.connect(); c }
 }
 
 trait Subject[T] extends Observable[T] {
@@ -123,3 +127,4 @@ object ObservableSeqExt {
     }
 
 }
+

@@ -1,5 +1,6 @@
 package devtools.kafka_data_viewer.ui
 
+import devtools.kafka_data_viewer.AppSettings.FilterData
 import devtools.kafka_data_viewer.KafkaConnTopicsInfo.{KafkaTopicsMgmt, _}
 import devtools.kafka_data_viewer.KafkaDataViewer
 import devtools.kafka_data_viewer.KafkaDataViewer.{TopicRecord, isNumber}
@@ -50,8 +51,8 @@ object DecodingFunction {
             key = StringMessage.formatter().decode(rec.topic, rec.key),
             value = msgEncoders(rec.topic).formatter().decode(rec.topic, rec.value))
 
-    def encode(msgEncoders: String => MessageType)(topic: String, key: String, value: String): (Array[Byte], Array[Byte]) =
-        StringMessage.formatter().encode(topic, key) -> msgEncoders(topic).formatter().encode(topic, value)
+    def encode(valueType: MessageType)(topic: String, key: String, value: String): (Array[Byte], Array[Byte]) =
+        StringMessage.formatter().encode(topic, key) -> valueType.formatter().encode(topic, value)
 
     def messageTypeDisplay(msgType: MessageType): String = msgType match {
         case StringMessage => "String"
@@ -136,7 +137,7 @@ class TopicsTablePane(val layoutData: String,
 
 class LoggingPane(val layoutData: String,
                   loggingConsumer: ConsumerConnection,
-                  filters: BehaviorSubject[Seq[(String, Seq[String])]],
+                  filters: BehaviorSubject[Seq[FilterData]],
                   topicsList: Observable[Seq[TopicInfoRec]],
                   topicsMgmt: KafkaTopicsMgmt,
                   typesRegistry: TypesRegistry,
@@ -178,16 +179,16 @@ class LoggingPane(val layoutData: String,
             .map(_ => Unit)
 
     override def content(): UiWidget = {
-        UiPanel(layoutData, Grid("margin 5"), items = Seq(
+        UiPanel(layoutData, Grid("margin 2"), items = Seq(
             UiSplitPane("grow", proportion = 20, orientation = UiHoriz, els = (
-                    UiPanel("", Grid(), items = Seq(
-                        UiLabel(text = "Add topics to Lister contiually"),
+                    UiPanel("", Grid("margin 2"), items = Seq(
+                        UiLabel(text = "Add topics to Lister continually"),
                         new PreFilterPane[String]("growx", currentSelectedItems = listeningTopics,
                             allItems = topicsList.mapSeq(_._1),
                             applySelectedItems = listeningTopics <<,
                             filters = filters),
                         UiSplitPane("grow", proportion = 50, orientation = UiVert, els = (
-                                UiPanel("", Grid(), items = Seq(
+                                UiPanel("", Grid("margin 2"), items = Seq(
                                     UiLabel(text = "Type to filter"),
                                     UiText("growx", text = filterTopicsToAdd),
                                     new TopicsTablePane("grow",
@@ -197,7 +198,7 @@ class LoggingPane(val layoutData: String,
                                         onTopicDblClick = _ => addTopics << Unit),
                                     UiButton("growx", text = "Add topics to listen", addTopics)
                                 )),
-                                UiPanel("", Grid(), items = Seq(
+                                UiPanel("", Grid("margin 2"), items = Seq(
                                     UiLabel(text = "Currently listening topics"),
                                     new TopicsTablePane("grow",
                                         topicsList = listeningTopicsInfo,
@@ -277,9 +278,9 @@ class ReadTopicPane(
     }
 
     override def content(): UiWidget = {
-        UiPanel(layoutData, Grid("margin 5"), items = Seq(
+        UiPanel(layoutData, Grid("margin 2"), items = Seq(
             UiSplitPane("grow", proportion = 20, orientation = UiHoriz, els = (
-                    UiPanel("", Grid(), items = Seq(
+                    UiPanel("", Grid("margin 2"), items = Seq(
                         UiLabel(text = "Items to read per partition"),
                         UiCombo("growx", items = sizeToRead, text = sizeToReadSelection),
                         UiLabel(text = "Filter topics by name"),
@@ -304,52 +305,5 @@ class ReadTopicPane(
             ))
         ))
     }
-}
-
-class ProduceMessagePane(val layoutData: String,
-                         consumer: ConsumerConnection,
-                         producer: ProducerConnection,
-                         msgEncoders: String => MessageType,
-                         topics: TopicsWithSizes) extends UiComponent {
-
-    private val defaultPartitioner = "Default Partitioner"
-
-    private val topic = behaviorSubject("")
-    private val key = behaviorSubject("")
-    private val partition = behaviorSubject(defaultPartitioner)
-    private val messageType = behaviorSubject("")
-    private val message = behaviorSubject("")
-    private val sendAction = publishSubject[Unit]()
-
-    private val partitionsList = topic.map(topic =>
-        if (topic.isEmpty) Seq(defaultPartitioner)
-        else defaultPartitioner +: topics.map(_._1).find(topic ==).map(_ => consumer.queryTopicPartitions(topic).map(_.toString)).getOrElse(Seq()))
-
-    private val messageTypesList = behaviorSubject(Seq(""))
-
-    for ((_, partition) <- sendAction.withLatestFrom(partition); (keyBuf, valueBuf) = DecodingFunction.encode(msgEncoders)(topic.value, key.value, message.value))
-        producer.send(topic.value, keyBuf, valueBuf, partition match {
-            case `defaultPartitioner` => DefaultPartitioner
-            case x if isNumber(x) => ExactPartition(x.toInt)
-            case _ => throw new Exception("Partition not recognized")
-        })
-
-    override def content(): UiWidget =
-        UiPanel(layoutData, Grid("margin 5"), items = Seq(
-            UiPanel("growx", Grid("cols 2"), items = Seq(
-                UiPanel("grow", Grid("cols 2"), items = Seq(
-                    UiLabel(text = "Topic"),
-                    UiCombo("growx", text = topic, items = topics.map(_._1)),
-                    UiLabel(text = "Key"),
-                    UiText("growx", text = key),
-                    UiLabel(text = "Partition"),
-                    UiCombo(text = partition, items = partitionsList, editable = false),
-                    UiLabel(text = "Message Type"),
-                    UiCombo(selection = messageType, items = messageTypesList, editable = false)
-                )),
-                UiButton("growy, valign T", text = "Send", onAction = sendAction)
-            )),
-            UiText("grow", multi = true, text = message)
-        ))
 }
 

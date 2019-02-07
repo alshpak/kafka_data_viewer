@@ -382,8 +382,8 @@ object FxRender {
     class UiPanelRenderer[T](panel: UiPanel)(implicit renderers: FxRenderers) extends Renderer[Pane] {
         override def render(): Pane = {
             val c = new GridPane()
-            c.setGridLinesVisible(false)
-            c.setBorder(Border.EMPTY)
+            //c.setGridLinesVisible(false)
+            //c.setBorder(Border.EMPTY)
 
             for (items <- panel.items) {
 
@@ -608,8 +608,10 @@ object FxRender {
 
     def applyContentToState(widget: UiWidget, stage: Stage, fullScreen: Boolean)(implicit renderers: FxRenderers): Unit = {
         val rootPane = grabFullContent(widget)
-        if (fullScreen)
+        if (fullScreen) {
             rootPane.setPrefSize(java.awt.Toolkit.getDefaultToolkit.getScreenSize.width * 0.9, java.awt.Toolkit.getDefaultToolkit.getScreenSize.height * 0.9)
+            stage.setMaximized(true)
+        }
         val scene = new Scene(rootPane)
         val url = classOf[App].getResource("/css.css")
         val cssLocation = url.toExternalForm

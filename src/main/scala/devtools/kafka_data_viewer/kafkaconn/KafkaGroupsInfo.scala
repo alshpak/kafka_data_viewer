@@ -1,6 +1,6 @@
 package devtools.kafka_data_viewer.kafkaconn
 
-import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, KafkaConsumerGroupService, ZkConsumerGroupService}
+import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService}
 import org.apache.kafka.common.Node
 
 object KafkaGroupsInfo {
@@ -18,7 +18,7 @@ object KafkaGroupsInfo {
 
     def getKafkaGroups(kafkaHost: String): Seq[String] = {
         val opts = new ConsumerGroupCommandOptions(Array("--bootstrap-server", kafkaHost))
-        val groupService = new KafkaConsumerGroupService(opts)
+        val groupService = new ConsumerGroupService(opts)
         try {
             groupService.listGroups()
         } finally {
@@ -27,18 +27,19 @@ object KafkaGroupsInfo {
     }
 
     def getZooGroups(zooHost: String): Seq[String] = {
-        val opts = new ConsumerGroupCommandOptions(Array("--zookeeper", zooHost))
-        val groupService = new ZkConsumerGroupService(opts)
-        try {
-            groupService.listGroups()
-        } finally {
-            groupService.close()
-        }
+//        val opts = new ConsumerGroupCommandOptions(Array("--zookeeper", zooHost))
+//        val groupService = new ZkConsumerGroupService(opts)
+//        try {
+//            groupService.listGroups()
+//        } finally {
+//            groupService.close()
+//        }
+        Seq()
     }
 
     def describeKafkaGroup(kafkaHost: String, group: String): Seq[PartitionAssignmentState] = {
         val opts = new ConsumerGroupCommandOptions(Array("--bootstrap-server", kafkaHost, "--group", group))
-        val groupService = new KafkaConsumerGroupService(opts)
+        val groupService = new ConsumerGroupService(opts)
         try {
             val res = groupService.collectGroupOffsets()
             val states = res._2.getOrElse(Seq())
@@ -52,18 +53,19 @@ object KafkaGroupsInfo {
     }
 
     def describeZooGroup(zooHost: String, group: String): Seq[PartitionAssignmentState] = {
-        val opts = new ConsumerGroupCommandOptions(Array("--zookeeper", zooHost, "--group", group))
-        val groupService = new ZkConsumerGroupService(opts)
-        try {
-            val res = groupService.collectGroupOffsets()
-            val states = res._2.getOrElse(Seq())
-            states.map(state => PartitionAssignmentState(
-                group = state.group, coordinator = state.coordinator, topic = state.topic, partition = state.partition,
-                offset = state.offset, lag = state.lag, consumerId = state.consumerId, host = state.host, clientId = state.clientId,
-                logEndOffset = state.logEndOffset))
-        } finally {
-            groupService.close()
-        }
+//        val opts = new ConsumerGroupCommandOptions(Array("--zookeeper", zooHost, "--group", group))
+//        val groupService = new ZkConsumerGroupService(opts)
+//        try {
+//            val res = groupService.collectGroupOffsets()
+//            val states = res._2.getOrElse(Seq())
+//            states.map(state => PartitionAssignmentState(
+//                group = state.group, coordinator = state.coordinator, topic = state.topic, partition = state.partition,
+//                offset = state.offset, lag = state.lag, consumerId = state.consumerId, host = state.host, clientId = state.clientId,
+//                logEndOffset = state.logEndOffset))
+//        } finally {
+//            groupService.close()
+//        }
+        Seq()
     }
 
 }

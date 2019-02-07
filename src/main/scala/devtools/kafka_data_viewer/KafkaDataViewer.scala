@@ -1,10 +1,9 @@
 package devtools.kafka_data_viewer
 
-import java.io.{File, FileInputStream, FileOutputStream, FileWriter}
 import java.net.URI
 import java.time.Instant
-import java.util
 
+import devtools.kafka_data_viewer.AppSettings.FilterData
 import devtools.kafka_data_viewer.KafkaConnTopicsInfo._
 import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
 import devtools.kafka_data_viewer.kafkaconn.Connector.{ConsumerConnection, ProducerConnection, TopicsWithSizes}
@@ -13,6 +12,7 @@ import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, Message
 import devtools.kafka_data_viewer.ui.KafkaToolUpdate.UpdateUrl
 import devtools.kafka_data_viewer.ui._
 import devtools.lib.rxext.ListChangeOps.{AddItems, ListChangeOp, RemoveItemObjs, SetList}
+import devtools.lib.rxext.Observable.{just, merge}
 import devtools.lib.rxext.ObservableSeqExt._
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
@@ -22,36 +22,23 @@ import devtools.lib.rxui._
 import io.reactivex.schedulers.Schedulers
 import org.apache.commons.cli.{DefaultParser, Options}
 import org.apache.kafka.common.errors.InterruptException
-import org.yaml.snakeyaml.{DumperOptions, Yaml}
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.language.postfixOps
 
 class KafkaDataViewerAppPane(val layoutData: String = "",
                              updateState: (AppUpdateState, UpdateUrl),
                              connections: BehaviorSubject[Seq[ConnectionDefinition]],
-                             filters: BehaviorSubject[Seq[(String, Seq[String])]],
-                             groupName: String,
-                             avroRegistires: BehaviorSubject[Seq[String]]
+                             filters: BehaviorSubject[Seq[FilterData]],
+                             groupName: String
                             )(implicit uiRenderer: UiRenderer) extends UiComponent {
 
 
     case class ConnectionsSet(logging: ConsumerConnection, read: ConsumerConnection, master: ConsumerConnection, producer: ProducerConnection)
 
     private def connectToServices(connDef: ConnectionDefinition) = {
-
-        def queueResolverBySet(queuesDef: Seq[String]): String => Boolean = {
-            val cache = mutable.HashMap[String, Boolean]()
-            topic => {
-                if (!cache.contains(topic))
-                    cache(topic) = queuesDef.exists(topicDef => topic == topicDef || topicDef.endsWith("*") && topic.startsWith(topicDef.substring(0, topicDef.length - 1)))
-                cache(topic)
-            }
-        }
-
         val connector = new KafkaConnector(
-            host = connDef.kafkaHost,
+            host = connDef.kafkaHost.value,
             groupName = groupName)
 
         ConnectionsSet(logging = connector.connectConsumer(), read = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
@@ -78,7 +65,6 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
     for ((connectTo, connectedList) <- onConnect.withLatestFrom(connected); if !connectedList.exists(connectTo ==)) {
         val connectionSubject = publishSubject[Option[Either[String, ConnHandle]]]()
         val cancelConnection = publishSubject[Unit]()
-        val topicSettings = behaviorSubject(connectTo.topicSettings)
         val connThread = new Thread(() =>
             try {
                 val connSet = connectToServices(connectTo)
@@ -88,7 +74,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                         Some(Right(new ConnHandle(connDef = connectTo,
                             connSet = connSet,
                             initTopicsAndSizes = topicsAndSizes,
-                            topicSettingsHndl = topicSettings
+                            topicSettingsHndl = connectTo.topicSettings
                         )))
             } catch {
                 case _: InterruptException =>
@@ -104,11 +90,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
 
         for (connectResultOpt <- connectionDone; connectResult <- connectResultOpt) {
             connectResult match {
-                case Right(connHndl) =>
-                    connectOps << AddItems(Seq(connHndl))
-                    for (topicSettings <- topicSettings) {
-                        connections << connections.value.map(connDef => if (connDef.name == connectTo.name) connDef.copy(topicSettings = topicSettings) else connDef)
-                    }
+                case Right(connHndl) => connectOps << AddItems(Seq(connHndl))
                 case Left(error) => uiRenderer.alert(ErrorAlert, "Connection in cancelled; " + error)
             }
         }
@@ -153,7 +135,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                             initTopicsAndSizes = itemHndl.initTopicsAndSizes,
                             filters = filters,
                             closed = itemHndl.closeHndl.value,
-                            avroRegistires = avroRegistires,
+                            avroRegistires = itemHndl.connDef.avroRegistries,
                             topicToType = itemHndl.topicSettingsHndl)),
                     closeable = true,
                     onClose = el => onClose onNext el,
@@ -237,7 +219,7 @@ class KafkaManageMessageTypesPane(val layoutData: String = "",
                 multiSelect = false
             ),
             UiPanel("growx", Grid("cols 2"), items = Seq(
-                UiButton(text = "Add", onAction = () => addNewServer() ),
+                UiButton(text = "Add", onAction = () => addNewServer()),
                 UiButton(text = "Remove", onAction = onRemove)
             ))
         ))
@@ -253,7 +235,7 @@ class KafkaConnectionPane(val layoutData: String = "",
                           masterConsumer: ConsumerConnection,
                           producer: ProducerConnection,
                           initTopicsAndSizes: TopicsWithSizes,
-                          filters: BehaviorSubject[Seq[(String, Seq[String])]],
+                          filters: BehaviorSubject[Seq[FilterData]],
                           topicToType: BehaviorSubject[Seq[(String, MessageType)]],
                           avroRegistires: BehaviorSubject[Seq[String]],
                           closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
@@ -262,11 +244,12 @@ class KafkaConnectionPane(val layoutData: String = "",
     private val msgEncoders: String => MessageType = topic => StringMessage
     private val typesRegistry = new TypesRegistry(topicToType, avroRegistires)
 
-    private val refreshTopics: Subject[Unit] = behaviorSubject(Unit)
+    private val refreshTopics: Subject[Unit] = publishSubject()
 
-    private val topicsList: Observable[Seq[TopicInfoRec]] = refreshTopics
-            .map(_ => masterConsumer.queryTopicsWithSizes())
-            .mapSeq { case (topic, size) => (topic, size, topicToType.map(mappings => mappings.find(_._1 == topic).map(_._2).getOrElse(StringMessage))) }
+    private val topicsList: Observable[Seq[TopicInfoRec]] =
+        merge(Seq(just(initTopicsAndSizes), refreshTopics.map(_ => masterConsumer.queryTopicsWithSizes())))
+                .mapSeq { case (topic, size) => (topic, size, topicToType.map(mappings => mappings.find(_._1 == topic).map(_._2).getOrElse(StringMessage))) }
+                .withCachedLatest()
 
     private val messageTypes: Observable[Seq[MessageType]] =
         avroRegistires.map(avroRegistires => StringMessage +: ZipMessage +: avroRegistires.map(AvroMessage))
@@ -295,7 +278,7 @@ class KafkaConnectionPane(val layoutData: String = "",
     private val topicsData = KafkaTopicsMgmt(
         messageTypes = messageTypes,
         onApplyMessageType = applyMessageTypes <<,
-        onManageMessageTypes = manageMessageTypes _,
+        onManageMessageTypes = () => manageMessageTypes(),
         onRequestRefresh = refreshTopics
     )
 
@@ -318,7 +301,8 @@ class KafkaConnectionPane(val layoutData: String = "",
             UiTab(label = "Produce message", content = new ProduceMessagePane("",
                 consumer = masterConsumer,
                 producer = producer,
-                topics = initTopicsAndSizes,
+                topicsList = topicsList,
+                topicsMgmt = topicsData,
                 msgEncoders = msgEncoders)),
             UiTab(label = "Consumers Info", content = new ConsumersInfoPane("", connDef)),
         ))
@@ -345,7 +329,11 @@ object KafkaDataViewer {
 
     case class TopicRecord(partition: Int, offset: Long, time: Instant, topic: String, key: String, value: String, msgtype: MessageType = StringMessage)
 
-    case class ConnectionDefinition(name: String, kafkaHost: String, zoo: String, topicSettings: Seq[(String, MessageType)] = Seq())
+    case class ConnectionDefinition(
+                                           name: BehaviorSubject[String] = behaviorSubject(""),
+                                           kafkaHost: BehaviorSubject[String] = behaviorSubject(""),
+                                           topicSettings: BehaviorSubject[Seq[(String, MessageType)]] = behaviorSubject(Seq()),
+                                           avroRegistries: BehaviorSubject[Seq[String]] = behaviorSubject(Seq()))
 
     def isNumber(s: String): Boolean = try {s.toLong; true} catch {case _: Exception => false}
 
@@ -356,87 +344,20 @@ object KafkaDataViewer {
 
     def main(args: Array[String]): Unit = {
 
-        def withres[T <: AutoCloseable, R](t: T)(f: T => R): R = try f(t) finally t.close()
-
         val options = new Options()
         options.addRequiredOption("n", "groupname", true, "Group name to connect to kafka server")
 
         val cli = new DefaultParser().parse(options, args)
         val groupName = cli.getOptionValue("n")
 
-        val appProps = new File("application.yml")
-        if (!appProps.exists()) {
+        val appSettings = AppSettings.connect()
 
-            val appPropsRes = KafkaDataViewer.getClass.getClassLoader.getResourceAsStream(appProps.getName)
-            withres(new FileOutputStream(appProps)) { out =>
-                val buf = Array.ofDim[Byte](4096)
-                Iterator continually (appPropsRes read buf) takeWhile (_ > -1) foreach (out.write(buf, 0, _))
-            }
-        }
-
-        val dumperOptions = new DumperOptions()
-        dumperOptions.setPrettyFlow(true)
-        dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK)
-        val settingsYaml = new Yaml(dumperOptions)
-        val settings = withres(new FileInputStream(appProps))(res => settingsYaml.load[java.util.Map[String, Object]](res))
-        withres(new FileWriter(appProps))(settingsYaml.dump(settings, _))
-
-        val connections = behaviorSubject[Seq[ConnectionDefinition]](
-            Option(settings.get("connections")).getOrElse(new util.ArrayList()).asInstanceOf[java.util.List[java.util.Map[String, Object]]].asScala
-                    .map(condef => ConnectionDefinition(
-                        name = condef.getOrDefault("name", condef.get("host")).asInstanceOf[String],
-                        kafkaHost = condef.get("host").asInstanceOf[String],
-                        zoo = condef.get("zoo").asInstanceOf[String],
-                        topicSettings =
-                                Option(condef.get("topicsettings")).getOrElse(new util.ArrayList()).asInstanceOf[util.List[String]].asScala
-                                        .map(topicDefStr => topicDefStr.split(":") match {
-                                            case Array(topic, "String") => topic -> StringMessage
-                                            case Array(topic, "GZIP") => topic -> ZipMessage
-                                            case Array(topic, "AVRO", avroHost) => topic -> AvroMessage(avroHost)
-                                            case _ => "unknown" -> StringMessage
-                                        })
-                    )))
-
-        for (connections <- connections) {
-            settings.put("connections", connections.map(con => Map(
-                "name" -> con.name,
-                "host" -> con.kafkaHost,
-                "zoo" -> con.zoo,
-                "topicsettings" -> con.topicSettings.map {
-                    case (topic, StringMessage) => topic + ":String"
-                    case (topic, ZipMessage) => topic + ":GZIP"
-                    case (topic, AvroMessage(avroHost)) => topic + ":AVRO:" + avroHost
-                    case _ => /* JDD */ throw new IllegalStateException("not supported serialized type")
-                }.toList.asJava
-            ).asJava).toList.asJava)
-            withres(new FileWriter(appProps))(settingsYaml.dump(settings, _))
-        }
-
-        val filters = behaviorSubject[Seq[(String, Seq[String])]](
-            settings.getOrDefault("filters", new util.HashMap()).asInstanceOf[util.Map[String, util.List[String]]].asScala
-                    .map { case (key, items) => key -> items.asScala }
-                    .toSeq
-                    .sortBy(_._1))
-
-        for (filters <- filters) {
-            settings.put("filters", filters.map { case (key, values) => key -> values.asJava }.toMap.asJava)
-            withres(new FileWriter(appProps))(settingsYaml.dump(settings, _))
-        }
-
-        val avroRegistires = behaviorSubject[Seq[String]](
-            settings.getOrDefault("avro_registries", new util.ArrayList[String]()).asInstanceOf[util.List[String]].asScala
-        )
-        for (avroRegistires <- avroRegistires) {
-            settings.put("avro_registries", avroRegistires.toList.asJava)
-            withres(new FileWriter(appProps))(settingsYaml.dump(settings, _))
-        }
 
         DefaultFxRenderes.runApp(root = new KafkaDataViewerAppPane(
             updateState = KafkaToolUpdate.retrieveUpdateState(),
-            connections = connections,
-            filters = filters,
-            groupName = groupName,
-            avroRegistires = avroRegistires
+            connections = appSettings.connections,
+            filters = appSettings.filters,
+            groupName = groupName
         ))
 
     }
