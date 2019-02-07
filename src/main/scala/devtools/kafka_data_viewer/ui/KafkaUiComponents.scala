@@ -134,7 +134,7 @@ class SearchedTextDataPane(val layoutData: String,
     displayText <<< text
 
     private val seachItems: Observable[Seq[SearchElement]] = text.map(s =>
-        s.toCharArray
+        s.toCharArray.filterNot(p => p == '\r')
                 .foldRight(List[List[Char]]())((el, acc) =>
                     acc.headOption.map(head => el :: head).getOrElse(List(el)) :: acc)
                 .zipWithIndex)
@@ -213,6 +213,7 @@ class TableOutputDataPane[T](val layoutData: String,
 
     private val fieldToCols = fields.map(field => FieldToColumn(title = field._1, data = field._2, onSort = if (sorting.isDefinedAt(field._1)) Some(publishSubject()) else None))
     for (f2c <- fieldToCols; onSort <- f2c.onSort; asc <- onSort) sortRecords(f2c.title, asc = asc)
+    for (x <- onLoadNewData; y <- x) println("Read done ")
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("margin 2"), items = Seq(
         new SearchElementsPane[T]("growx", cachedRecordsSubj, searchSelection, compare, searchText),
@@ -223,7 +224,7 @@ class TableOutputDataPane[T](val layoutData: String,
                         selection = selectedRecords,
                         columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc: Boolean) => f2c.onSort.get << asc))
                     ),
-                    onLoadNewData.map(_ => UiLink("growx", text = "Click to read next portion of data", onAction = onLoadNewData)))
+                    onLoadNewData.map(action => UiLink("growx", text = "Click to read next portion of data", onAction = action)))
                         .filter(_.isDefined).map(_.get)),
                 UiTabPanel("grow", tabs = behaviorSubject(Seq(
                     UiTab(label = "Raw Output", content = new SearchedTextDataPane("grow", text = selectedRecordValue, defaultSearch = searchText)),

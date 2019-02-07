@@ -55,7 +55,7 @@ case class UiCombo(layoutData: String = "",
 
 case class UiLink(layoutData: String = "",
                   text: Observable[String] = empty(),
-                  onAction: Option[Subject[Unit]] = None,
+                  onAction: () => Unit = () => Unit,
                   disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiButton(layoutData: String = "",

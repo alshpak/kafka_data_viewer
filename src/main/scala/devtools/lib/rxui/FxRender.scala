@@ -164,7 +164,7 @@ object FxRender {
         override def render(): Button = {
             val c = new Button()
             for (disabled <- link.disabled) c.setDisable(disabled)
-            for (obs <- link.onAction) c.onActionProperty().addListener((_: EventHandler[ActionEvent], _: EventHandler[ActionEvent]) => obs << Unit)
+            c.setOnAction((event: ActionEvent) => link.onAction())
             for (text <- link.text) c.setText(text)
             c
         }
