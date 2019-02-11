@@ -12,6 +12,7 @@ import scala.language.postfixOps
 class KafkaConnectionsListPane(val layoutData: String = "",
                                connections: BehaviorSubject[Seq[ConnectionDefinition]],
                                onConnect: Subject[ConnectionDefinition],
+                               defaultGroup: String
                               )(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     private val onAdd = publishSubject[Unit]()
@@ -23,6 +24,7 @@ class KafkaConnectionsListPane(val layoutData: String = "",
         val applyHandle = publishSubject[Unit]()
         val closeHandle = publishSubject[Unit]()
         val newConnection = ConnectionDefinition()
+        newConnection.group << defaultGroup
         for (conn <- $(applyHandle)) connections << connections.value :+ newConnection
         uiRenderer.runModal(new ConfigureConnectionWindow("", newConnection, applyHandle, closeHandle), close = closeHandle)
     }
