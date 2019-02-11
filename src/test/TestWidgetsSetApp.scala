@@ -6,7 +6,7 @@ import devtools.lib.rxui.FxRender.DefaultFxRenderes
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui.{UiLabel, _}
 
-object TestSmallApp {
+object TestWidgetsSetApp {
 
     class TestUi(val layoutData: String = "") extends UiComponent {
 
@@ -124,7 +124,7 @@ object TestSmallApp {
                     )
                 ))),
                 UiTab(label = "Updatable table", content = UiPanel("", Grid(), items = Seq(
-                    new UiComponent() {
+                    new UiObservingComponent() {
                         override val layoutData: String = "grow"
 
                         class Item(val title: String) {
@@ -142,7 +142,7 @@ object TestSmallApp {
 
                         private val selection = publishSubject[Seq[Item]]()
                         private val onItemsUpdate = publishSubject[Unit]()
-                        for ((_, selection) <- onItemsUpdate.withLatestFrom(selection))
+                        for ((_, selection) <- $(onItemsUpdate.withLatestFrom(selection)))
                             for (item <- selection) item.change()
 
                         override def content(): UiWidget =
@@ -165,6 +165,41 @@ object TestSmallApp {
                             )
                     }
 
+                ))),
+                UiTab(label = "Lazy Tree", content = UiPanel("", Grid(), items = Seq(
+                    new UiComponent {
+                        override val layoutData: String = "grow"
+
+                        trait TreeItem {
+                            val label:String
+                            val value:String = ""
+                            def subitems(): Seq[TreeItem] = Seq()
+                        }
+                        case class RootItem(label:String = "Root") extends TreeItem {
+                            override def subitems(): Seq[TreeItem] = {
+                                Thread.sleep(10000)
+                                Seq(SubItem())
+                            }
+                        }
+                        case class SubItem(label: String = "SubItem", override val value: String = "SomeValue") extends TreeItem
+
+                        override def content(): UiWidget =
+                            UiTree[TreeItem](layoutData,
+                                items = Seq(RootItem()),
+                                columns = Seq[UiColumn[TreeItem]](
+                                    UiColumn("Label", _.label),
+                                    UiColumn("Value", _.value)
+                                ),
+                                expanded = _ => false,
+                                subitems = _.subitems(),
+                                hasChildren = {
+                                    case RootItem(_) => true
+                                    case _ => false
+                                }
+                            )
+
+
+                    }
                 )))
             ))
         ))

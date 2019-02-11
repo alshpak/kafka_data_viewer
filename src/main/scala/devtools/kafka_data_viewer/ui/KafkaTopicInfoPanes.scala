@@ -18,6 +18,7 @@ import io.reactivex.schedulers.Schedulers
 
 import scala.language.postfixOps
 
+/*
 class TypesRegistry(
                            private val topicToType: BehaviorSubject[Seq[(String, MessageType)]],
                            private val avroRegistires: BehaviorSubject[Seq[String]]) {
@@ -35,6 +36,7 @@ class TypesRegistry(
         topicToType << topicToType.value.filterNot(_._1 == topic) :+ (topic -> messageType)
     }
 }
+*/
 
 class TopicsInfoList(val topicsWithSizes: Observable[TopicsWithSizes], onRefresh: => Unit) {
     def requestRefresh(): Unit = onRefresh
@@ -65,17 +67,21 @@ object DecodingFunction {
 class RecordsOutputTablePane(val layoutData: String,
                              records: Observable[LoggingOp[BinaryTopicRecord]],
                              refreshData: Observable[Unit] = empty(),
-                             msgEncoders: String => MessageType,
-                             onLoadNewData: Option[Subject[Unit]] = None) extends UiComponent {
+                             msgTypes: Observable[(String, MessageType)],
+                             onLoadNewData: Option[Subject[Unit]] = None) extends UiObservingComponent {
 
     private val builtRecords = publishSubject[LoggingOp[TopicRecord]]()
     private val recordsCache = records.fromLogOps()
 
-    builtRecords <<< records.map(_.map(DecodingFunction.decode(msgEncoders)))
+    private val encFuncCache = scala.collection.mutable.HashMap[String, MessageType]()
+    for (msgType <- $(msgTypes)) encFuncCache += msgType._1 -> msgType._2
+    private val encFunc: String => MessageType = encFuncCache
 
-    for ((_, recs) <- refreshData.withLatestFrom(recordsCache)) {
+    (builtRecords <<< records.map(recsSeq => recsSeq.map(DecodingFunction.decode(encFunc)))) ($)
+
+    for ((_, recsSeq) <- $(refreshData.withLatestFrom(recordsCache))) {
         builtRecords << ResetLogOp()
-        builtRecords << AppendLogOp(recs.map(DecodingFunction.decode(msgEncoders)))
+        builtRecords << AppendLogOp(recsSeq.map(DecodingFunction.decode(encFunc)))
     }
 
     case class FieldDef(title: String, value: TopicRecord => String, sorting: Option[(TopicRecord, TopicRecord) => Boolean])
@@ -107,10 +113,10 @@ class TopicsTablePane(val layoutData: String,
                       selection: Subject[Seq[String]] = publishSubject(),
                       onTopicDblClick: String => Unit,
                       disabled: Observable[Boolean] = just(false)
-                     ) extends UiComponent {
+                     ) extends UiObservingComponent {
 
     private val selectedItems = behaviorSubject[Seq[TopicInfoRec]](Seq())
-    selection <<< selectedItems.mapSeq((x: TopicInfoRec) => x._1)
+    (selection <<< selectedItems.mapSeq((x: TopicInfoRec) => x._1)) ($)
 
     val menu: Observable[Seq[UiMenuItem]] =
         Observable.merge[Any](Seq(topicsMgmt.messageTypes, selectedItems)).withLatestFrom(topicsMgmt.messageTypes, selectedItems)
@@ -140,10 +146,13 @@ class LoggingPane(val layoutData: String,
                   filters: BehaviorSubject[Seq[FilterData]],
                   topicsList: Observable[Seq[TopicInfoRec]],
                   topicsMgmt: KafkaTopicsMgmt,
-                  typesRegistry: TypesRegistry,
-                  closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
+                  closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     private val consumer = loggingConsumer
+
+    val msgTypes: Observable[(String, MessageType)] = topicsList.mapSeq(topicRec => topicRec._3.map(topicRec._1 -> _)).flatMap(Observable.merge(_))
+
+    //private val msgEncoders: Observable[String => MessageType] = topicsList.mapSeq(topicRec => topicRec._3.map(topicRec._1 -> _))
 
     private val filterTopicsToAdd = behaviorSubject("")
 
@@ -158,7 +167,7 @@ class LoggingPane(val layoutData: String,
             .subscribeOn(Schedulers.newThread())
             .observeOn(uiRenderer.uiScheduler())
             .filter(_ => !closed)
-            .asPublishSubject
+            .asPublishSubject($)
 
     private val shownTopicsToAdd: Observable[Seq[TopicInfoRec]] =
         Observable.combineLatest(topicsList, filterTopicsToAdd, listeningTopics)
@@ -170,9 +179,9 @@ class LoggingPane(val layoutData: String,
     private val topicsToRemove = publishSubject[Seq[String]]()
     private val removeTopics = publishSubject[Unit]()
 
-    for (topicsToAdd <- addTopics.withLatestFrom(topicsToAdd).map(_._2)) listeningTopics << (listeningTopics.value ++ topicsToAdd)
+    for (topicsToAdd <- $(addTopics.withLatestFrom(topicsToAdd).map(_._2))) listeningTopics << (listeningTopics.value ++ topicsToAdd)
 
-    for (topics <- removeTopics.withLatestFrom(topicsToRemove).map(_._2)) listeningTopics << (listeningTopics.value diff topics)
+    for (topics <- $(removeTopics.withLatestFrom(topicsToRemove).map(_._2))) listeningTopics << (listeningTopics.value diff topics)
 
     private val refreshData: Observable[Unit] = topicsList.mapSeq(_._3)
             .flatMap((msgTypes: Seq[Observable[MessageType]]) => Observable.merge(msgTypes))
@@ -209,7 +218,7 @@ class LoggingPane(val layoutData: String,
                                 ))
                         ))
                     )),
-                    new RecordsOutputTablePane("grow", records = logger.map(AppendLogOp(_)), refreshData = refreshData, msgEncoders = typesRegistry.encoder)
+                    new RecordsOutputTablePane("grow", records = logger.map(AppendLogOp(_)), refreshData = refreshData, msgTypes = msgTypes)
             ))
         ))
     }
@@ -221,16 +230,17 @@ class ReadTopicPane(
                            readCon: ConsumerConnection,
                            topicsList: Observable[Seq[TopicInfoRec]],
                            topicsMgmt: KafkaTopicsMgmt,
-                           typesRegistry: TypesRegistry,
-                           closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
+                           closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     type TopicInfo = (String, Long, MessageType)
     type TopicToSize = (String, Long)
 
+    val msgTypes: Observable[(String, MessageType)] = topicsList.mapSeq(topicRec => topicRec._3.map(topicRec._1 -> _)).flatMap(Observable.merge(_))
+
     private val sizeToRead = Seq("All", "100", "1k", "10k", "100k")
     private val sizeToReadSelection = behaviorSubject(sizeToRead.head)
     private var sizeToReadCurrent: Long = -1L
-    for (sizeStr <- sizeToReadSelection) sizeToReadCurrent = sizeStr.replaceAll("k", "000").trim() match {
+    for (sizeStr <- $(sizeToReadSelection)) sizeToReadCurrent = sizeStr.replaceAll("k", "000").trim() match {
         case "All" => -1L
         case "" => -1L
         case x if isNumber(x) => x.toLong
@@ -252,17 +262,17 @@ class ReadTopicPane(
             .map(_ => Unit)
 
     private var currentRecords: Subject[Seq[BinaryTopicRecord]] = publishSubject()
-    for (topic <- openSelectedTopic) {
+    for (topic <- $(openSelectedTopic)) {
         records << ResetLogOp()
         operationRunning onNext true
         val recordsSeqs: Observable[Seq[BinaryTopicRecord]] =
             readCon.readTopic(topic, sizeToReadCurrent)(progress, stop = onStop)
         readTrackedRecords(recordsSeqs)
     }
-    for (recordsList <- currentRecords) records << AppendLogOp(recordsList)
+    for (recordsList <- $(currentRecords)) records << AppendLogOp(recordsList)
 
     private val onNextRead: Subject[Unit] = publishSubject()
-    for (_ <- onNextRead) if (currentRecords != null && !operationRunning.value) {
+    for (_ <- $(onNextRead)) if (currentRecords != null && !operationRunning.value) {
         operationRunning onNext true
         val records = readCon.readNextRecords()(progress, stop = onStop)
         readTrackedRecords(records)
@@ -274,7 +284,7 @@ class ReadTopicPane(
                 .observeOn(uiRenderer.uiScheduler())
                 .filter(_ => !closed)
                 .doOnComplete(() => if (!closed) operationRunning onNext false)
-        for (records <- trackedRecords) currentRecords onNext records
+        for (records <- $(trackedRecords)) currentRecords << records
     }
 
     override def content(): UiWidget = {
@@ -294,7 +304,7 @@ class ReadTopicPane(
                         )
                     )),
                     UiPanel("", Grid(), items = Seq(
-                        new RecordsOutputTablePane("grow", records = records, refreshData = refreshData, onLoadNewData = onNextRead, msgEncoders = typesRegistry.encoder)
+                        new RecordsOutputTablePane("grow", records = records, refreshData = refreshData, onLoadNewData = onNextRead, msgTypes = msgTypes)
                     ))
             )),
             UiPanel("growx", Grid("cols 2"), items = Seq(

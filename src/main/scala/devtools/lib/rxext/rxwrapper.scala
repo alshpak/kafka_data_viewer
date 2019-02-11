@@ -8,7 +8,6 @@ import io.reactivex.{ObservableOnSubscribe, ObservableSource, Scheduler, functio
 
 import scala.collection.JavaConverters._
 import scala.language.implicitConversions
-import Observable._
 
 trait Observable[T] {
 
@@ -24,8 +23,6 @@ trait Observable[T] {
     }
 
     def subscribe(f: T => Unit): Disposable = wrapped.subscribe(x => f(x))
-
-    def foreach(f: T => Unit): Unit = wrapped.subscribe(x => f(x))
 
     def filter(predicate: T => Boolean): Observable[T] = wrapped.filter(x => predicate(x))
 
@@ -47,7 +44,7 @@ trait Observable[T] {
 
     def doOnComplete(onComplete: () => Unit): Observable[T] = wrapped.doOnComplete(() => onComplete())
 
-    def asPublishSubject: Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< this; subject }
+//    def asPublishSubject: Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< this; subject }
 
     def withCachedLatest(): Observable[T] = Observable[T] { val c = wrapped.replay(1); c.connect(); c }
 }
@@ -56,7 +53,7 @@ trait Subject[T] extends Observable[T] {
 
     override val wrapped: JSubject[T]
 
-    def <<<(obs: Observable[_ <: T]): Unit = obs.wrapped.subscribe(wrapped)
+    // def <<<(obs: Observable[_ <: T]): Unit = obs.wrapped.subscribe(wrapped)
 
     def <<(t: T): Unit = wrapped onNext t
 

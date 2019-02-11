@@ -26,8 +26,16 @@ object KafkaDataPolluter {
 
         val producer = new KafkaProducer[String, Array[Byte]]((producerProps: Map[String, Object]).asJava)
 
+        /*
+        producer.send(
+           // new ProducerRecord("nulltopic", "test", "test".getBytes)
+            new ProducerRecord("nulltopic", null, null)
+        ).get()
+        System.exit(0)
+        */
+
         for (topic <- 0.to(5)) {
-            for (msg <- 0.to(10000)) {
+            for (msg <- 0.to(20000)) {
                 producer.send(new ProducerRecord[String, Array[Byte]]("jsontopic" + topic, "key" + msg, someJson(msg).getBytes("UTF8")))
             }
         }

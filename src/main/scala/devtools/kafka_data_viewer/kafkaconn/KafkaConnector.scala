@@ -9,8 +9,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import devtools.kafka_data_viewer.kafkaconn.Connector._
 import devtools.kafka_data_viewer.kafkaconn.CustomPartitioner.DelegatingPartitioner
 import devtools.lib.rxext.{Observable, Subject}
+import devtools.lib.rxui.DisposeStore
 import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRecord, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, Partitioner, ProducerConfig, ProducerRecord}
+import org.apache.kafka.common.errors.InterruptException
 import org.apache.kafka.common.serialization.{ByteArrayDeserializer, ByteArraySerializer, StringSerializer}
 import org.apache.kafka.common.{Cluster, PartitionInfo, TopicPartition}
 
@@ -93,18 +95,20 @@ class KafkaConsumerConnection(host: String,
 
     override def readNextRecords()(executionMonitor: Option[Subject[String]], stop: Option[Observable[Unit]]): Observable[Seq[BinaryTopicRecord]] = {
         println("read next topics")
+        val $ = new DisposeStore()
         var read = 0
         var stopped = false
-        for (stopAction <- stop; _ <- stopAction) stopped = true
+        for (stopAction <- stop; _ <- $(stopAction)) stopped = true
         Observable.create(obs => operation {
             for (recs <- Stream.continually(consumer.poll(ofSeconds(3))).takeWhile(!_.isEmpty && !stopped)) {
                 val records = recs.asScala.toSeq
                 read += records.size
-                for (mon <- executionMonitor) mon onNext ("Read " + read)
+                for (mon <- executionMonitor) mon << ("Read " + read)
                 obs onNext records.map(buildBinaryRecord)
             }
-            for (mon <- executionMonitor) mon onNext ("Completed read " + read)
+            for (mon <- executionMonitor) mon << ("Completed read " + read)
             obs onComplete()
+            $.dispose()
         })
     }
 
@@ -136,8 +140,8 @@ class KafkaConsumerConnection(host: String,
             }
 
             val nextRecords: Unit => Seq[GenRecord] = _ =>
-                if (assignment.isEmpty) {Thread.sleep(1000); Seq() }
-                else consumer.poll(ofSeconds(1)).asScala.toSeq
+                if (assignment.isEmpty) {try Thread.sleep(1000) catch { case e: InterruptedException =>  }; Seq() }
+                else try consumer.poll(ofSeconds(1)).asScala.toSeq catch { case e: InterruptException => Seq() }
 
 
             for (records <- Stream.continually(reassign.andThen(nextRecords)(getNewTopics())).takeWhile(_ => !closed))
@@ -149,6 +153,7 @@ class KafkaConsumerConnection(host: String,
 
     override def readTopic(topic: String, limitPerPartition: Long)(executionMonitor: Option[Subject[String]], stop: Option[Observable[Unit]]): Observable[Seq[BinaryTopicRecord]] = {
         println("read topics")
+        val $ = new DisposeStore()
         val partitions: Seq[PartitionInfo] = consumer.listTopics().asScala.find(_._1 == topic).get._2.asScala
         val topicPartitions = partitions.map(info => new TopicPartition(info.topic(), info.partition()))
 
@@ -165,7 +170,7 @@ class KafkaConsumerConnection(host: String,
 
         var read = 0
         var stopped = false
-        for (stopAction <- stop; _ <- stopAction) stopped = true
+        for (stopAction <- stop; _ <- $(stopAction)) stopped = true
         Observable.create(obs => operation {
             for (recs <- Stream.continually(consumer.poll(ofSeconds(3))).takeWhile(!_.isEmpty && !stopped)) {
                 val records = recs.asScala.toSeq
@@ -175,6 +180,7 @@ class KafkaConsumerConnection(host: String,
             }
             for (mon <- executionMonitor) mon onNext ("Completed read " + read + " of " + totalCount)
             obs onComplete()
+            $.dispose()
         })
     }
 

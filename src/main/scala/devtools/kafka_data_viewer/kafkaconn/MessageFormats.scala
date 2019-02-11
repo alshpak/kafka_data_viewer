@@ -52,7 +52,9 @@ trait MessageFormat {
 object StringMessageFormat extends MessageFormat {
     override def encode(topic: String, s: String): Array[Byte] = s.getBytes("UTF8")
 
-    override def decode(topic: String, b: Array[Byte]): String = new String(b, "UTF8")
+    override def decode(topic: String, b: Array[Byte]): String =
+        Option(b).map(new String(_, "UTF8")).getOrElse("")
+
 }
 
 object GZipMessageFormat extends MessageFormat {
@@ -62,16 +64,18 @@ object GZipMessageFormat extends MessageFormat {
         buf.toByteArray
     }
 
-    override def decode(topic: String, b: Array[Byte]): String = {
-        try {
-            val isf = () => new BufferedReader(new InputStreamReader(
-                new GZIPInputStream(new ByteArrayInputStream(b))))
-            val readContent = (br: BufferedReader) => Stream.continually(br.readLine()).takeWhile(null !=).mkString("\n")
-            withClosable(isf)(readContent)
-        } catch {
-            case e: Exception => "Not a GZIP: " + e.toString + "; Message: " + new String(b, "UTF8")
-        }
-    }
+    override def decode(topic: String, b: Array[Byte]): String =
+        Option(b).map(b =>
+            try {
+                val isf = () => new BufferedReader(new InputStreamReader(
+                    new GZIPInputStream(new ByteArrayInputStream(b))))
+                val readContent = (br: BufferedReader) => Stream.continually(br.readLine()).takeWhile(null !=).mkString("\n")
+                withClosable(isf)(readContent)
+            } catch {
+                case e: Exception => "Not a GZIP: " + e.toString + "; Message: " + new String(b, "UTF8")
+            }
+        ).getOrElse("")
+
 }
 
 class AvroMessageFormat(avroServer: String) extends MessageFormat {
@@ -93,15 +97,13 @@ class AvroMessageFormat(avroServer: String) extends MessageFormat {
         bytes
     }
 
-    override def decode(topic: String, bytes: Array[Byte]): String = {
-        try {
+    override def decode(topic: String, bytes: Array[Byte]): String =
+        Option(bytes).map(bytes => try {
             val record = registryDeser.get.deserialize(topic, bytes).asInstanceOf[GenericData.Record]
             val converter = new JsonAvroConverter()
             val json = new String(converter.convertToJson(record), "UTF8")
             json
         } catch {
-            case e: Exception =>
-                "Can not unpack " + e.toString
-        }
-    }
+            case e: Exception => "Avro unpack error: " + e.toString + ": " + new String(bytes)
+        }).getOrElse("")
 }

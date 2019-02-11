@@ -5,8 +5,43 @@ import devtools.lib.rxext.Observable.{empty, just}
 import devtools.lib.rxext.{Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
 import io.reactivex.Scheduler
+import io.reactivex.disposables.Disposable
 
+import scala.collection.mutable
 import scala.language.implicitConversions
+
+trait Listanable[T] {
+    def foreach(t: T => Unit): Unit
+
+    def withFilter(predicate: T => Boolean): Listanable[T]
+}
+
+object Listanable {
+    def empty[T](): Listanable[T] = new Listanable[T]() {
+        override def foreach(t: T => Unit): Unit = (t: T => Unit) => Unit
+
+        override def withFilter(predicate: T => Boolean): Listanable[T] = empty()
+    }
+
+}
+
+class DisposeStore {
+
+    private val resources = mutable.ArrayBuffer[Disposable]()
+
+    def apply[T](obs: Observable[T]): Listanable[T] = new Listanable[T]() {
+        override def foreach(t: T => Unit): Unit = {val resource = obs.subscribe(t); resources += resource }
+
+        override def withFilter(predicate: T => Boolean): Listanable[T] = {
+            val filteredObs = obs.withFilter(predicate)
+            apply(filteredObs)
+        }
+    }
+
+
+    def dispose(): Unit = {resources foreach (_.dispose()); resources clear() }
+}
+
 
 trait UiWidget {val layoutData: String}
 
@@ -20,7 +55,11 @@ case class Grid(markup: String = "") extends Layout
 
 case class UiMenu(items: Seq[UiMenuItem])
 
-case class UiMenuItem(text: String, onSelect: () => Unit = () => Unit, subitems: Seq[UiMenuItem] = Seq())
+case class UiMenuItem(
+                             text: String,
+                             onSelect: () => Unit = () => Unit,
+                             subitems: Seq[UiMenuItem] = Seq(),
+                             disabled: Observable[Boolean] = false)
 
 case class UiLabel(layoutData: String = "", text: Observable[String] = empty()) extends UiWidget
 
@@ -44,6 +83,7 @@ case class UiList[T](layoutData: String = "",
                      selection: Option[Subject[Seq[T]]] = None,
                      onDblClick: Option[T => Unit] = None,
                      multiSelect: Observable[Boolean] = false,
+                     menu: Observable[Seq[UiMenuItem]] = empty(),
                      disabled: Observable[Boolean] = false) extends UiWidget
 
 case class UiCombo(layoutData: String = "",
@@ -61,7 +101,13 @@ case class UiLink(layoutData: String = "",
 case class UiButton(layoutData: String = "",
                     text: Observable[String] = empty(),
                     onAction: () => Unit = () => Unit,
-                    disabled: Observable[Boolean] = false) extends UiWidget
+                    disabled: Observable[Boolean] = false,
+                    defaultButton: Boolean = false,
+                    cancelButton: Boolean = false
+                   ) extends UiWidget
+
+case class UiSeparator(layoutData: String = "",
+                       orientation: UiOrientation) extends UiWidget
 
 case class UiColumn[T](
                               title: String,
@@ -100,6 +146,7 @@ case class UiTabPanelExt[T](layoutData: String = "",
                             tab: T => UiTab,
                             closeable: Boolean = false,
                             onClose: T => Any = (_: T) => Unit,
+                            selection: Option[Subject[T]] = None,
                             moveTabs: Boolean = false) extends UiWidget
 
 trait UiOrientation
@@ -131,6 +178,16 @@ object UiImplicits {
 
     implicit def subjectTo1ArgConsumer[T](s: Subject[T]): Some[T => Unit] = Some(x => s << x)
 
+    implicit class ContextSubscribe[T](subj: Subject[T]) {
+        def <<<(obs: Observable[T])($: Observable[T] => Listanable[T]): Unit = for (item <- $(obs)) subj << item
+    }
+
+    implicit class ContextObserving[T](obs: Observable[T]) {
+
+        def asPublishSubject($: Observable[T] => Listanable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); (subject <<< obs) ($); subject }
+    }
+
+
     //    implicit def consumerToSome(f: () => Unit): Option[() => Unit] = Some(f)
 
     //    implicit def asSubject[T](o: Observable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< o; subject }
@@ -145,9 +202,18 @@ trait UiComponent extends UiWidget {
 
 }
 
+trait UiObservingComponent extends UiComponent {
+
+    private val disposeStore = new DisposeStore()
+
+    def $[T](obs: Observable[T]): Listanable[T] = disposeStore(obs)
+
+    def dispose(): Unit = disposeStore.dispose()
+}
+
 trait UiRenderer {
 
-    def runApp(root: UiWidget): Unit
+    def runApp(root: UiWidget, postAction: UiRenderer => Unit = null): Unit
 
     def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit
 

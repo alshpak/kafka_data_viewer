@@ -23,8 +23,8 @@ object StubConnector {
             override def readTopicsContinually(topics: Observable[Seq[String]]): Observable[Seq[BinaryTopicRecord]] = {
                 val publisher = Subject.publishSubject[Seq[BinaryTopicRecord]]()
 
-                val currentTopics = Subject.behaviorSubject(Seq[String]())
-                currentTopics <<< topics
+//                val currentTopics = Subject.behaviorSubject(Seq[String]())
+//                (currentTopics <<< topics)($)
 //                new Thread { () =>
 //                    publisher << (for (topic <- currentTopics.value; amount <- 0 to Random.nextInt(5)) yield
 //                        TopicRecord(partition = Random.nextInt(3), offset = 1, time = Instant.now(), topic = topic, key = "some key", value = "Some value", msgtype = StringMessage))

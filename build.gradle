@@ -37,6 +37,22 @@ dependencies {
     testCompile "junit:junit:4.4"
 }
 
+task createProperties(dependsOn: processResources) {
+    doLast {
+        new File("$buildDir/resources/main/build.properties").withWriter { w ->
+            Properties p = new Properties()
+            p['version'] = project.version.toString()
+            p['url'] = project.url.toString()
+            p['update_url'] = project.update_url.toString()
+            p.store w, null
+        }
+    }
+}
+
+classes {
+    dependsOn createProperties
+}
+
 
 //mainClassName = "epam.devtools.appmonitor.montool.MonToolMain"
 

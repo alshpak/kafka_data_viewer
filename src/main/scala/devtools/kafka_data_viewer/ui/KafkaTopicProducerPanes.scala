@@ -17,7 +17,7 @@ class ProduceMessagePane(val layoutData: String,
                          producer: ProducerConnection,
                          topicsList: Observable[Seq[TopicInfoRec]],
                          topicsMgmt: KafkaTopicsMgmt,
-                         msgEncoders: String => MessageType) extends UiComponent {
+                         msgEncoders: String => MessageType) extends UiObservingComponent {
 
     sealed trait SelectedTopicType
 
@@ -34,20 +34,20 @@ class ProduceMessagePane(val layoutData: String,
     private val selectedTopicData = behaviorSubject[SelectedTopicType](CustomTopic)
 
     private val topicName = publishSubject[String]()
-    topicName <<< combineLatest(selectedTopicData, topicsList)
+    (topicName <<< combineLatest(selectedTopicData, topicsList)
             .map {
                 case (ExistingTopic(name), _) => name
                 case (CustomTopic, _) => ""
-            }
+            }) ($)
 
     private val selectedMessageType = behaviorSubject[MessageType]()
-    selectedMessageType <<< selectedTopicData.withLatestFrom(topicsList)
+    (selectedMessageType <<< selectedTopicData.withLatestFrom(topicsList)
             .map {
                 case (ExistingTopic(name), topicsListSeq) =>
                     topicsListSeq.find(_._1 == name).get._3
                 case (CustomTopic, _) => Observable.just[MessageType](StringMessage)
             }
-            .flatMap(x => x)
+            .flatMap(x => x)) ($)
 
     private val partitionsList = selectedTopicData
             .map { case ExistingTopic(name) => consumer.queryTopicPartitions(name); case _ => Seq() }
@@ -55,22 +55,24 @@ class ProduceMessagePane(val layoutData: String,
             .withCachedLatest()
 
     private val partition = behaviorSubject[String](defaultPartitioner)
-    partition <<< partitionsList.map(_ => defaultPartitioner)
+    (partition <<< partitionsList.map(_ => defaultPartitioner)) ($)
 
     private val key = behaviorSubject("")
     private val message = behaviorSubject("")
     private val sendAction = publishSubject[Unit]()
 
     for {
-        (_, partition, topicName, messageType) <- sendAction.withLatestFrom(partition, topicName, selectedMessageType)
+        (_, partition, topicName, messageType) <- $(sendAction.withLatestFrom(partition, topicName, selectedMessageType))
         if topicName.trim.nonEmpty
-        (keyBuf, valueBuf) = DecodingFunction.encode(messageType)(topicName, key.value, message.value)
-        partitioner = partition match {
+    } {
+        val (keyBuf, valueBuf) = DecodingFunction.encode(messageType)(topicName, key.value, message.value)
+        val partitioner = partition match {
             case `defaultPartitioner` => DefaultPartitioner
             case x if isNumber(x) => ExactPartition(x.toInt)
             // case _ => throw new Exception("Partition not recognized")
-        }}
+        }
         producer.send(topicName, keyBuf, valueBuf, partitioner)
+    }
 
 
     override def content(): UiWidget =
@@ -91,7 +93,7 @@ class ProduceMessagePane(val layoutData: String,
                         UiPanel("growx", Grid("cols 2"), items = Seq(
                             UiPanel("growx", Grid("cols 2, margin 2"), items = Seq(
                                 UiLabel(text = "Selected Topic:"),
-                                UiText(text = topicName, disabled = selectedTopicData.map(_.isInstanceOf[ExistingTopic])),
+                                UiText("growx", text = topicName, editable = selectedTopicData.map(!_.isInstanceOf[ExistingTopic])),
                                 UiLabel(text = "Message Type:"),
                                 UiComboT[MessageType](
                                     items = topicsMgmt.messageTypes,

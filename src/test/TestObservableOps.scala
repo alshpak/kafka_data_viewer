@@ -20,9 +20,9 @@ object TestObservableOps {
 
         Thread.sleep(1500)
 
-        tgt.foreach(x => println("Consumer 1: " + x))
-        tgt.foreach(x => println("Consumer 2: " + x))
-        tgt.foreach(x => println("Consumer 3: " + x))
+//        tgt.foreach(x => println("Consumer 1: " + x))
+//        tgt.foreach(x => println("Consumer 2: " + x))
+//        tgt.foreach(x => println("Consumer 3: " + x))
 
 
         Thread.sleep(5000L)

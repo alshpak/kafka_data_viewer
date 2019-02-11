@@ -8,6 +8,7 @@ import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
 import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, MessageType, StringMessage, ZipMessage}
 import devtools.lib.rxext.BehaviorSubject
 import devtools.lib.rxext.Subject.behaviorSubject
+import devtools.lib.rxui.DisposeStore
 import org.yaml.snakeyaml.{DumperOptions, Yaml}
 
 import scala.collection.JavaConverters._
@@ -48,6 +49,8 @@ object AppSettings {
 
     def connect(): AppSettings = {
 
+        val $  = new DisposeStore()
+
         val appPropsFile = new File("application.setting.yml")
         if (!appPropsFile.exists()) {
             appPropsFile.createNewFile()
@@ -60,7 +63,6 @@ object AppSettings {
         val settingsYaml = new Yaml(dumperOptions)
         val settingsRaw = withres(new FileInputStream(appPropsFile))(res => settingsYaml.load[java.util.Map[String, Object]](res))
         val settings = if (settingsRaw == null) new java.util.HashMap[String, Object]() else settingsRaw
-        println(settings)
 
         var initialize = true
 
@@ -78,7 +80,7 @@ object AppSettings {
                 }
                 items << prevItems.map(_._1)
 
-                for (items <- items) {
+                for (items <- $(items)) {
                     val newItems = items diff prevItems.map(_._1)
                     val removedItems = prevItems.filterNot(x => items.contains(x._1))
                     for (item <- newItems) {
@@ -96,9 +98,9 @@ object AppSettings {
                 }
             }
 
-            def property(nodeName: String, prop: BehaviorSubject[String]): Unit = {
-                if (initialize) prop << root.getOrDefault(nodeName, "").toString
-                for (change <- prop) {root.put(nodeName, change); onChange }
+            def property(nodeName: String, prop: BehaviorSubject[String], defaultValue: String = ""): Unit = {
+                if (initialize) prop << root.getOrDefault(nodeName, defaultValue).toString
+                for (change <- $(prop)) {root.put(nodeName, change); onChange }
             }
 
             def listStrings(nodeName: String, prop: BehaviorSubject[Seq[String]]): Unit = {
@@ -106,7 +108,7 @@ object AppSettings {
                     val initial = root.get(nodeName).asInstanceOf[util.List[String]].asScala
                     prop << Option(initial).getOrElse(Seq())
                 }
-                for (change <- prop) {root.put(nodeName, change.asJava); onChange }
+                for (change <- $(prop)) {root.put(nodeName, change.asJava); onChange }
             }
 
             def listCustom[T](nodeName: String, prop: BehaviorSubject[Seq[T]])(implicit converter: TypeSerializer[T]): Unit = {
@@ -114,7 +116,7 @@ object AppSettings {
                     val initial = root.get(nodeName).asInstanceOf[util.List[String]].asScala
                     prop << Option(initial).getOrElse(Seq()).map(converter.deserialize)
                 }
-                for (change <- prop) {root.put(nodeName, change.map(converter.serialize).asJava); onChange }
+                for (change <- $(prop)) {root.put(nodeName, change.map(converter.serialize).asJava); onChange }
             }
         }
 
@@ -125,6 +127,7 @@ object AppSettings {
         root.listNodes[ConnectionDefinition]("connections", connections, ConnectionDefinition(), (item, node) => {
             node.property("name", item.name)
             node.property("kafkaHost", item.kafkaHost)
+            node.property("group", item.group, "local.connection")
             node.listStrings("avroRegistries", item.avroRegistries)
             node.listCustom("topicsSettings", item.topicSettings)
         })

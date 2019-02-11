@@ -5,29 +5,31 @@ import java.util.concurrent.TimeUnit
 
 import com.sun.javafx.application.LauncherImpl
 import devtools.lib.rxext.ListChangeOps.{AddItems, InsertItems, RemoveItemObjs, RemoveItems, SetList}
-import devtools.lib.rxext.Subject
+import devtools.lib.rxext.{Observable, Subject}
 import io.reactivex.Scheduler
 import io.reactivex.Scheduler.Worker
 import io.reactivex.disposables.Disposable
 import javafx.application.{Application, Platform}
 import javafx.beans.property.{Property, SimpleStringProperty}
 import javafx.beans.value.{ChangeListener, ObservableValue}
-import javafx.collections.ListChangeListener
-import javafx.event.{ActionEvent, EventHandler}
+import javafx.collections.{ListChangeListener, ObservableList}
+import javafx.event.ActionEvent
 import javafx.geometry.{HPos, Insets, VPos, Orientation => FxOrientation}
-import javafx.scene.control.{TableColumn, _}
-import javafx.scene.input._
-import javafx.scene.layout._
+import javafx.scene.control.{Alert, Button, ComboBox, ContextMenu, Control, IndexRange, Label, ListCell, ListView, Menu, MenuItem, MultipleSelectionModel, SelectionMode, SelectionModel, Separator, SplitPane, Tab, TabPane, TableColumn, TableView, TextArea, TextField, TextInputControl, TreeItem, TreeTableColumn, TreeTableView}
+import javafx.scene.input.{ClipboardContent, ContextMenuEvent, KeyCode, KeyCodeCombination, KeyCombination, MouseButton, MouseEvent, TransferMode}
+import javafx.scene.layout.{Border, BorderStroke, BorderStrokeStyle, BorderWidths, CornerRadii, GridPane, Pane, Priority}
+import javafx.scene.paint.Color
 import javafx.scene.{Node, Scene}
 import javafx.stage.{Modality, Stage, StageStyle}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.language.implicitConversions
 
 object FxRender {
 
-    def linkBidirMultiSelection[T](obs: Subject[Seq[T]], selection: MultipleSelectionModel[T]): Unit = {
-        for (items <- obs; if items != selection.getSelectedItems.asScala) {
+    def linkBidirMultiSelection[T](obs: Subject[Seq[T]], selection: MultipleSelectionModel[T])($: Observable[Seq[T]] => Listanable[Seq[T]]): Unit = {
+        for (items: Seq[T] <- $(obs); if items != selection.getSelectedItems.asScala) {
             selection.clearSelection()
             for (item <- items) selection.select(item)
         }
@@ -36,8 +38,8 @@ object FxRender {
         })
     }
 
-    def linkBidirMultiSelection[T](obs: Subject[Seq[T]], selection: MultipleSelectionModel[T], applyOnSelection: Seq[T] => Unit): Unit = {
-        for (items <- obs; if items != selection.getSelectedItems.asScala) {
+    def linkBidirMultiSelection[T](obs: Subject[Seq[T]], selection: MultipleSelectionModel[T], applyOnSelection: Seq[T] => Unit)($: Observable[Seq[T]] => Listanable[Seq[T]]): Unit = {
+        for (items: Seq[T] <- $(obs); if items != selection.getSelectedItems.asScala) {
             selection.clearSelection()
             for (item <- items) selection.select(item)
             applyOnSelection(items)
@@ -47,20 +49,20 @@ object FxRender {
         })
     }
 
-    def linkBidirSingleSelect[T](obs: Subject[T], selection: SelectionModel[T]): Unit = {
-        for (item <- obs; if item != selection.getSelectedItem) selection.select(item)
+    def linkBidirSingleSelect[T](obs: Subject[T], selection: SelectionModel[T])($: Observable[T] => Listanable[T]): Unit = {
+        for (item <- $(obs); if item != selection.getSelectedItem) selection.select(item)
         selection.selectedItemProperty().addListener(new ChangeListener[T] {
             override def changed(observable: ObservableValue[_ <: T], oldValue: T, newValue: T): Unit = if (newValue != null) obs << newValue
         })
     }
 
-    def linkBidirPropObservation[O, P](obs: Subject[O], ctrlProp: Property[P])(implicit p2o: P => O, o2p: O => P): Unit = {
-        for (v <- obs; if p2o(ctrlProp.getValue) != v) ctrlProp.setValue(v)
+    def linkBidirPropObservation[O, P](obs: Subject[O], ctrlProp: Property[P])($: Observable[O] => Listanable[O])(implicit p2o: P => O, o2p: O => P): Unit = {
+        for (v <- $(obs); if p2o(ctrlProp.getValue) != v) ctrlProp.setValue(v)
         ctrlProp.addListener((_: P, newValue: P) => obs << newValue)
     }
 
-    def linkBidirActObservation[O, P](obs: Subject[O], ctrlProp: ObservableValue[P], apply: O => Unit)(implicit p2o: P => O): Unit = {
-        for (value <- obs; if p2o(ctrlProp.getValue) != value) apply(value)
+    def linkBidirActObservation[O, P](obs: Subject[O], ctrlProp: ObservableValue[P], apply: O => Unit)($: Observable[O] => Listanable[O])(implicit p2o: P => O): Unit = {
+        for (value <- $(obs); if p2o(ctrlProp.getValue) != value) apply(value)
         ctrlProp.addListener((_: P, newValue: P) => obs << newValue)
     }
 
@@ -79,187 +81,249 @@ object FxRender {
 
     trait Renderer[C <: Node] {
         def render(): C
+
+        def dispose(): Unit
     }
 
-    class UiLabelRenderer(w: UiLabel) extends Renderer[Label] {
+    abstract class ObservingRenderer[C <: Node] extends Renderer[C] {
+        private val resourcesStore = new DisposeStore()
+
+        def $[T](obs: Observable[T]): Listanable[T] = resourcesStore(obs)
+
+        def dispose(): Unit = resourcesStore.dispose()
+
+    }
+
+    class UiSeparatorRenderer(w: UiSeparator) extends ObservingRenderer[Separator] {
+        override def render(): Separator = {
+            val c = new Separator()
+            c.setOrientation(if (w.orientation == UiHoriz) FxOrientation.HORIZONTAL else FxOrientation.VERTICAL)
+            c
+        }
+    }
+
+    class UiLabelRenderer(w: UiLabel) extends ObservingRenderer[Label] {
         override def render(): Label = {
             val c = new Label()
-            for (text <- w.text) c.setText(text)
+            for (text <- $(w.text)) c.setText(text)
             c
         }
     }
 
-    class UiTextRenderer(w: UiText) extends Renderer[TextInputControl] {
+    class UiTextRenderer(w: UiText) extends ObservingRenderer[TextInputControl] {
         override def render(): TextInputControl = {
             val c: TextInputControl = if (w.multi) new TextArea() else new TextField()
-            for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())
-            for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))
-            for (editable <- w.editable) c.setEditable(editable)
-            for (disabled <- w.disabled) c.setDisable(disabled)
+            for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())($)
+            for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))($)
+            for (editable <- $(w.editable)) c.setEditable(editable)
+            for (disabled <- $(w.disabled)) c.setDisable(disabled)
             c
         }
     }
 
-    class UiStyledTextRenderer(w: UiStyledText) extends Renderer[TextInputControl] {
+    class UiStyledTextRenderer(w: UiStyledText) extends ObservingRenderer[TextInputControl] {
         override def render(): TextInputControl = {
             val c: TextInputControl = if (w.multi) new TextArea() else new TextField()
-            for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())
-            for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))
-            for (editable <- w.editable) c.setEditable(editable)
-            for (disabled <- w.disabled) c.setDisable(disabled)
+            for (obs <- w.text) linkBidirPropObservation(obs, c.textProperty())($)
+            for (obs <- w.selection) linkBidirActObservation(obs, c.selectionProperty(), (x: (Int, Int)) => c.selectRange(x._1, x._2))($)
+            for (editable <- $(w.editable)) c.setEditable(editable)
+            for (disabled <- $(w.disabled)) c.setDisable(disabled)
             c
         }
     }
 
-    class UiListRenderer[T](list: UiList[T]) extends Renderer[ListView[T]] {
+    class UiListRenderer[T](list: UiList[T]) extends ObservingRenderer[ListView[T]] {
+        private val $row$ = new DisposeStore()
+        private val $menu$ = new DisposeStore()
+
         override def render(): ListView[T] = {
             val c = new ListView[T]()
-            for (disabled <- list.disabled) c.setDisable(disabled)
-            for (multi <- list.multiSelect) c.getSelectionModel.setSelectionMode(if (multi) SelectionMode.MULTIPLE else SelectionMode.MULTIPLE)
+            for (disabled <- $(list.disabled)) c.setDisable(disabled)
+            for (multi <- $(list.multiSelect)) c.getSelectionModel.setSelectionMode(if (multi) SelectionMode.MULTIPLE else SelectionMode.MULTIPLE)
             c.setCellFactory((param: ListView[T]) => {
                 val c = new ListCell[T]()
                 new ListCell[T] {
                     override def updateItem(item: T, empty: Boolean): Unit = {
                         super.updateItem(item, empty)
                         if (!empty && item != null) {
-                            for (text <- list.valueProvider(item)) setText(text)
+                            for (text <- $row$(list.valueProvider(item))) setText(text) /// TODO INCORRECT YET, MUST DISPOSE ONE ROW
                         } else setText(null)
                     }
                 }
             })
-            for (items <- list.items) {
+            for (items <- $(list.items)) {
+                $row$.dispose()
                 c.getItems.clear()
                 c.getItems.addAll(items.asJava)
             }
-            for (obs <- list.selection) linkBidirMultiSelection(obs, c.getSelectionModel)
-            for (obs <- list.onDblClick)
+            for (obs <- list.selection) linkBidirMultiSelection(obs, c.getSelectionModel)($)
+            for (handler <- list.onDblClick)
                 c.setOnMouseClicked((event: MouseEvent) => {
                     if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY) {
-                        obs(c.getSelectionModel.getSelectedItem)
+                        handler(c.getSelectionModel.getSelectedItem)
                     }
                 })
+
+
+            def menuToItems(parent: ContextMenu)(itemModel: UiMenuItem): MenuItem =
+                if (itemModel.subitems.isEmpty) applying(new MenuItem(itemModel.text)) { item =>
+                    item.setOnAction { evt => parent.hide(); evt.consume(); itemModel.onSelect(); }
+                    for (disabled <- $menu$(itemModel.disabled)) item.setDisable(disabled)
+                } else applying(new Menu()) { item =>
+                    item.setText(itemModel.text)
+                    item.getItems.addAll(itemModel.subitems.map(menuToItems(parent)).asJavaCollection)
+                    for (disabled <- $menu$(itemModel.disabled)) item.setDisable(disabled)
+                }
+
+            for (menuItems: Seq[UiMenuItem] <- $(list.menu); if menuItems.nonEmpty) {
+                $menu$.dispose()
+                val ctxMenuRoot = applying(new ContextMenu()) { cm =>
+                    cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
+                }
+                c.setContextMenu(ctxMenuRoot)
+            }
             c
+        }
+
+        override def dispose(): Unit = {
+            $row$.dispose()
+            $menu$.dispose()
+            super.dispose()
         }
     }
 
-    class UiComboRenderer(combo: UiCombo) extends Renderer[ComboBox[String]] {
+    class UiComboRenderer(combo: UiCombo) extends ObservingRenderer[ComboBox[String]] {
         override def render(): ComboBox[String] = {
             val c = new ComboBox[String]()
-            for (disabled <- combo.disabled) c.setDisable(disabled)
-            for (items <- combo.items) {
+            for (disabled <- $(combo.disabled)) c.setDisable(disabled)
+            for (items <- $(combo.items)) {
                 val selection = c.getSelectionModel.getSelectedItem
                 c.getItems.clear()
-                c.getItems.addAll(items.toArray: _*)
+                c.getItems.addAll(items.asJava)
                 if (items.contains(selection)) c.getSelectionModel.select(selection)
                 else c.getEditor.setText("")
             }
-            for (editable <- combo.editable) c.setEditable(editable)
-            for (obs <- combo.text) linkBidirPropObservation(obs, c.getEditor.textProperty())
-            for (obs <- combo.selection) linkBidirSingleSelect(obs, c.getSelectionModel)
+            for (editable <- $(combo.editable)) c.setEditable(editable)
+            for (obs <- combo.text) linkBidirPropObservation(obs, c.getEditor.textProperty())($)
+            for (obs <- combo.selection) linkBidirSingleSelect(obs, c.getSelectionModel)($)
             c
         }
     }
 
-    class UiLinkRenderer(link: UiLink) extends Renderer[Button] {
+    class UiLinkRenderer(link: UiLink) extends ObservingRenderer[Button] {
         override def render(): Button = {
             val c = new Button()
-            for (disabled <- link.disabled) c.setDisable(disabled)
+            for (disabled <- $(link.disabled)) c.setDisable(disabled)
             c.setOnAction((event: ActionEvent) => link.onAction())
-            for (text <- link.text) c.setText(text)
+            for (text <- $(link.text)) c.setText(text)
             c
         }
     }
 
-    class UiButtonRenderer(button: UiButton) extends Renderer[Button] {
+    class UiButtonRenderer(button: UiButton) extends ObservingRenderer[Button] {
         override def render(): Button = {
             val c = new Button()
-            for (disabled <- button.disabled) c.setDisable(disabled)
+            c.setDefaultButton(button.defaultButton)
+            c.setCancelButton(button.cancelButton)
+            for (disabled <- $(button.disabled)) c.setDisable(disabled)
             c.setOnAction((event: ActionEvent) => button.onAction())
-            for (text <- button.text) c.setText(text)
+            for (text <- $(button.text)) c.setText(text)
             c
         }
     }
 
-    class UiTableRenderer[T](tableModel: UiTable[T]) extends Renderer[TableView[T]] {
-        override def render(): TableView[T] = {
-            val c = new TableView[T]()
-            for (disabled <- tableModel.disabled) c.setDisable(disabled)
-            c.getSelectionModel.setSelectionMode(SelectionMode.MULTIPLE)
+    class UiTableRenderer[T](tableModel: UiTable[T]) extends ObservingRenderer[TableView[T]] {
 
-            for (columns <- tableModel.columns) {
+        private val rowObservables = mutable.HashMap[T, DisposeStore]()
+
+        override def render(): TableView[T] = {
+            val tableView = new TableView[T]()
+            for (disabled <- $(tableModel.disabled)) tableView.setDisable(disabled)
+            tableView.getSelectionModel.setSelectionMode(SelectionMode.MULTIPLE)
+
+            for (columns <- $(tableModel.columns)) {
                 val colsToModels: Seq[(TableColumn[T, String], UiColumn[T])] = columns
                         .map(colModel => applying(new TableColumn[T, String]()) { col =>
                             col.setText(colModel.title)
                             col.setCellValueFactory((param: TableColumn.CellDataFeatures[T, String]) => {
-                                applying(new SimpleStringProperty()) { prop => for (value <- colModel.value(param.getValue)) prop.setValue(value) }
+                                applying(new SimpleStringProperty()) { prop =>
+                                    val rowModel: T = param.getValue
+                                    val $row$ = new DisposeStore()
+                                    rowObservables += rowModel -> $row$
+                                    for (value <- $row$(colModel.value(param.getValue))) prop.setValue(value)
+                                }
                             })
                             col.setSortable(colModel.onSort.isDefined)
                         } -> colModel)
-                c.getColumns.clear()
-                c.getColumns.addAll(colsToModels.map(_._1).asJavaCollection)
-                c.sortPolicyProperty().set { param: TableView[T] =>
-                    for ((sortCol, sortColModel) <- c.getSortOrder.asScala.headOption.flatMap(sortCol => colsToModels.find(sortCol == _._1))) {
+                tableView.getColumns.clear()
+                tableView.getColumns.addAll(colsToModels.map(_._1).asJavaCollection)
+                tableView.sortPolicyProperty().set { param: TableView[T] =>
+                    for ((sortCol, sortColModel) <- tableView.getSortOrder.asScala.headOption.flatMap(sortCol => colsToModels.find(sortCol == _._1))) {
                         sortColModel.onSort.get(sortCol.getSortType == TableColumn.SortType.ASCENDING)
                     }
                     true
                 }
             }
 
-            for (itemsOp <- tableModel.items) itemsOp match {
-                case SetList(items) => c.getItems.setAll(items.asJavaCollection)
-                case AddItems(items) => c.getItems.addAll(items.asJavaCollection)
-                case InsertItems(index, items) => c.getItems.addAll(index, items.asJavaCollection)
-                case RemoveItems(index, amount) => c.getItems.remove(index, index + amount)
-                case RemoveItemObjs(items) => c.getItems.removeAll(items: _*)
+            for (itemsOp <- $(tableModel.items)) itemsOp match {
+                case SetList(items) => tableView.getItems.setAll(items.asJavaCollection)
+                case AddItems(items) => tableView.getItems.addAll(items.asJavaCollection)
+                case InsertItems(index, items) => tableView.getItems.addAll(index, items.asJavaCollection)
+                case RemoveItems(index, amount) => tableView.getItems.remove(index, index + amount)
+                case RemoveItemObjs(items) => tableView.getItems.removeAll(items: _*)
             }
 
-            for (selection <- tableModel.selection) {
-                linkBidirMultiSelection(selection, c.getSelectionModel, (selectedItems: Seq[T]) => {
-                    if (selectedItems.size == 1) c.scrollTo(selectedItems.head)
-                })
+            tableView.getItems.addListener(new ListChangeListener[T] {
+                override def onChanged(c: ListChangeListener.Change[_ <: T]): Unit = {
+                    while (c.next()) {
+                        c.getRemoved.forEach { rowModel =>
+                            rowObservables(rowModel).dispose()
+                            rowObservables -= rowModel
+                        }
+                    }
+                }
+            })
+
+            for (selectionSubj <- tableModel.selection) {
+                linkBidirMultiSelection(selectionSubj, tableView.getSelectionModel, (selectedItems: Seq[T]) => {
+                    if (selectedItems.size == 1) tableView.scrollTo(selectedItems.head)
+                })($)
             }
 
-            for (handler <- tableModel.onDblClick) c.setOnMouseClicked((event: MouseEvent) =>
+            for (handler <- tableModel.onDblClick) tableView.setOnMouseClicked((event: MouseEvent) =>
                 if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY)
-                    handler(c.getSelectionModel.getSelectedItem))
+                    handler(tableView.getSelectionModel.getSelectedItem))
 
             def menuToItems(parent: ContextMenu)(itemModel: UiMenuItem): MenuItem =
                 if (itemModel.subitems.isEmpty) applying(new MenuItem(itemModel.text)) { item => item.setOnAction { evt => parent.hide(); evt.consume(); itemModel.onSelect(); } }
                 else applying(new Menu(itemModel.text)) { item => item.getItems.addAll(itemModel.subitems.map(menuToItems(parent)).asJavaCollection) }
 
-            for (menuItems <- tableModel.menu; if menuItems.nonEmpty) {
+            for (menuItems: Seq[UiMenuItem] <- $(tableModel.menu); if menuItems.nonEmpty) {
                 val ctxMenuRoot = applying(new ContextMenu()) { cm =>
                     cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
                 }
-                c.setContextMenu(ctxMenuRoot)
+                tableView.setContextMenu(ctxMenuRoot)
             }
-            //                for (selection <- Option(c.getSelectionModel.getSelectedItem)) {
-            //                    val ctxMenuRoot = applying(new ContextMenu()) { cm =>
-            //                        cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
-            //                    }
-            //                    c.setContextMenu(ctxMenuRoot)
-            //prevMenu = Some(ctxMenuRoot)
-            //c.getScene.getRoot.setCon
-            //ctxMenuRoot.show(c, event.getScreenX, event.getScreenY)
-            //                }
-            //            c.setOnContextMenuRequested { event: ContextMenuEvent =>
-            //                    for (prevMenu <- prevMenu) prevMenu.hide()
-            //                }
+            tableView
+        }
 
-            c
+        override def dispose(): Unit = {
+            rowObservables.values.foreach(_.dispose())
+            rowObservables.clear()
+            super.dispose()
         }
     }
 
-    class UiTreeRenderer[T](treeModel: UiTree[T]) extends Renderer[TreeTableView[T]] {
+    class UiTreeRenderer[T](treeModel: UiTree[T]) extends ObservingRenderer[TreeTableView[T]] {
         override def render(): TreeTableView[T] = {
             val treeTable = new TreeTableView[T]()
-            for (disabled <- treeModel.disabled) treeTable.setDisable(disabled)
+            for (disabled <- $(treeModel.disabled)) treeTable.setDisable(disabled)
 
-            for (columns <- treeModel.columns) {
+            for (columns <- $(treeModel.columns)) {
                 treeTable.getColumns.addAll(columns.map(colModel => applying(new TreeTableColumn[T, String]()) { col =>
                     col.setText(colModel.title)
                     col.setCellValueFactory((param: TreeTableColumn.CellDataFeatures[T, String]) => {
-                        applying(new SimpleStringProperty()) { prop => for (value <- colModel.value(param.getValue.getValue)) prop.setValue(value) }
+                        applying(new SimpleStringProperty()) { prop => for (value <- $(colModel.value(param.getValue.getValue))) prop.setValue(value) } /// TODO INCORRECT YET
                     })
                     col.setSortable(false)
                 }).asJavaCollection)
@@ -269,7 +333,7 @@ object FxRender {
             val rootItem = new TreeItem[T]()
             treeTable.setRoot(rootItem)
 
-            for (menuItems <- treeModel.menu)
+            for (menuItems <- $(treeModel.menu)) // TODO MENU MUST BE CHANGED AS IN TABLE
                 treeTable.setOnContextMenuRequested((event: ContextMenuEvent) =>
                     for (selection <- Option(treeTable.getSelectionModel.getSelectedItem).flatMap(x => Option(x.getValue))) {
                         val ctxMenuRoot = applying(new ContextMenu()) { cm =>
@@ -282,21 +346,30 @@ object FxRender {
 
             class LazyTreeItem(val itemModel: T) extends TreeItem(itemModel) {
 
-                for (items <- treeModel.subitems(itemModel)) getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection)
+                var loaded = false
+
                 setExpanded(treeModel.expanded(itemModel))
 
                 override def isLeaf: Boolean = !treeModel.hasChildren(itemModel)
+
+                override def getChildren: ObservableList[TreeItem[T]] = {
+                    if (!loaded) {
+                        for (items <- $(treeModel.subitems(itemModel))) super.getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection) /// TODO INCORRECT YET
+                        loaded = true
+                    }
+                    super.getChildren
+                }
             }
 
-            for (items <- treeModel.items) rootItem.getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection)
+            for (items <- $(treeModel.items)) rootItem.getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection)
 
             val selectionModel = treeTable.getSelectionModel
-            for (selection <- treeModel.selection) {
+            for (selectionSubj <- treeModel.selection) {
                 selectionModel.getSelectedItems.addListener(new ListChangeListener[TreeItem[T]] {
                     override def onChanged(c: ListChangeListener.Change[_ <: TreeItem[T]]): Unit =
-                        selection << c.getList.asScala.map(_.getValue)
+                        selectionSubj << c.getList.asScala.map(_.getValue)
                 })
-                for (items <- selection; if items != selectionModel.getSelectedItems.asScala.map(_.getValue)) {
+                for (items: Seq[T] <- $(selectionSubj); if items != selectionModel.getSelectedItems.asScala.map(_.getValue)) {
                     selectionModel.clearSelection()
                 }
             }
@@ -353,7 +426,7 @@ object FxRender {
                         case ("fill", _) => Seq("fillx" -> null, "filly" -> null)
                         case (k, v) => Seq(k -> v)
                     }.foreach {
-                        case ("colspan", spanStr) => number(spanStr, "colspan can not be parsed from value ")
+                        case ("colspan", spanStr) => data.colspan = number(spanStr, "colspan can not be parsed from value ")
                         case ("grabx", _) => data.hgrow = true
                         case ("graby", _) => data.vgrow = true
                         case ("fillx", _) => data.hfill = true
@@ -379,73 +452,150 @@ object FxRender {
         (GridLayoutData(margin = margin), itemsLayout)
     }
 
-    class UiPanelRenderer[T](panel: UiPanel)(implicit renderers: FxRenderers) extends Renderer[Pane] {
+    class UiPanelRenderer[T](panel: UiPanel)(implicit renderers: FxRenderers) extends ObservingRenderer[Pane] {
+        private val childToRenderer = mutable.HashMap[Node, Renderer[_]]()
+
+        private def disposeChildren(): Unit = childToRenderer.foreach { case (_, renderer) => renderer.dispose() }
+
         override def render(): Pane = {
             val c = new GridPane()
             //c.setGridLinesVisible(false)
             //c.setBorder(Border.EMPTY)
 
-            for (items <- panel.items) {
+            for (items <- $(panel.items)) {
 
                 val (paneLayout, itemLayouts) = calculateGridLayoutData(panel.layout.asInstanceOf[Grid].markup, items)
+                disposeChildren()
                 c.getChildren.clear()
-                val paneCItems: Iterable[(UiWidget, Node)] = for (item <- items) yield item -> renderers.renderer(item).render()
-                paneCItems.foreach { case (item, cItem) =>
+                childToRenderer.clear()
+                val paneCItems: Iterable[(UiWidget, Renderer[_ <: Node])] = for (item <- items) yield item -> renderers.renderer(item)
+                paneCItems.foreach { case (item, renderer) =>
+                    val cItem = renderer.render()
                     val l = itemLayouts(item)
                     GridPane.setFillWidth(cItem, l._2.hfill)
                     GridPane.setFillHeight(cItem, l._2.vfill)
-                    GridPane.setHgrow(cItem, if (l._2.hgrow) Priority.ALWAYS else null)
-                    GridPane.setVgrow(cItem, if (l._2.vgrow) Priority.ALWAYS else null)
+                    if (l._2.hgrow) {
+                        GridPane.setHgrow(cItem, Priority.SOMETIMES)
+                        cItem match {case c: Control => c.setMaxWidth(Double.MaxValue); case _ =>}
+                    }
+                    if (l._2.vgrow) {
+                        GridPane.setVgrow(cItem, Priority.SOMETIMES)
+                        cItem match {case c: Control => c.setMaxHeight(Double.MaxValue); case _ =>}
+                    }
+
                     GridPane.setHalignment(cItem, l._2.halign)
                     GridPane.setValignment(cItem, l._2.valign)
                     GridPane.setMargin(cItem, new Insets(paneLayout.margin, paneLayout.margin, paneLayout.margin, paneLayout.margin))
 
                     c.add(cItem, l._1.x, l._1.y, l._2.colspan, 1)
+                    childToRenderer += cItem -> renderer
                 }
             }
 
             c
         }
-    }
 
-    class UiTabPanelRenderer(tabPanelModel: UiTabPanel)(implicit renderers: FxRenderers) extends Renderer[Node] {
-        override def render(): Node = {
-            val pane = new TabPane()
-            for (tabs <- tabPanelModel.tabs) pane.getTabs.setAll(
-                tabs.map { tabModel =>
-                    val tab = new Tab()
-                    for (label <- tabModel.label) tab.setText(label)
-                    for (content <- tabModel.content) tab.setContent(renderers.renderer(content).render())
-                    tab.setClosable(false)
-                    tab
-                }.asJavaCollection)
-            pane
+        override def dispose(): Unit = {
+            disposeChildren()
+            childToRenderer.clear()
+            super.dispose()
         }
     }
 
-    class UiTabPanelListOpsRenderer[T](tabPanelModel: UiTabPanelExt[T])(implicit renderers: FxRenderers) extends Renderer[Node] {
+    class UiTabPanelRenderer(tabPanelModel: UiTabPanel)(implicit renderers: FxRenderers) extends ObservingRenderer[Node] {
+        private val tabToRenderer = mutable.HashMap[Tab, Renderer[_]]()
+
         override def render(): Node = {
             val pane = new TabPane()
-            var itemsToContent = Map[T, Tab]()
+            for (tabs <- $(tabPanelModel.tabs)) {
+                tabToRenderer.foreach { case (_, renderer) => renderer.dispose() }
+                tabToRenderer.clear()
+                pane.getTabs.clear()
+                tabs.foreach { tabModel =>
+                    val tab = new Tab()
+                    for (label <- $(tabModel.label)) tab.setText(label)
+                    for (content <- $(tabModel.content)) {
+                        if (tabToRenderer.contains(tab)) tabToRenderer(tab).dispose()
+                        val tabRenderer = renderers.renderer(content)
+                        tab.setContent(tabRenderer.render())
+                        tabToRenderer += tab -> tabRenderer
+                    }
+                    tab.setClosable(false)
+                    pane.getTabs.add(tab)
+                }
+            }
+            pane
+        }
+
+        override def dispose(): Unit = {
+            tabToRenderer.values.foreach(_.dispose())
+            tabToRenderer.clear()
+            super.dispose()
+        }
+    }
+
+    class UiTabPanelListOpsRenderer[T](tabPanelModel: UiTabPanelExt[T])(implicit renderers: FxRenderers) extends ObservingRenderer[Node] {
+        private val tabToRenderer = mutable.HashMap[Tab, Renderer[_]]()
+        private val tabListenStore = mutable.HashMap[Tab, DisposeStore]()
+        private val itemsToContent = mutable.HashMap[T, Tab]()
+
+        override def render(): Node = {
+            val pane = new TabPane()
             val tabModelToTabs: Seq[T] => java.util.Collection[Tab] = _.map { itemModel =>
                 val tabModel = tabPanelModel.tab(itemModel)
                 val tab = new Tab()
-                for (label <- tabModel.label) tab.setText(label)
-                for (content <- tabModel.content) tab.setContent(renderers.renderer(content).render())
+                val $tab$ = new DisposeStore()
+                tabListenStore += tab -> $tab$
+                for (label <- $tab$(tabModel.label)) tab.setText(label)
+                for (content <- $tab$(tabModel.content)) {
+                    if (tabToRenderer.contains(tab)) tabToRenderer(tab).dispose()
+                    val tabRenderer = renderers.renderer(content)
+                    tab.setContent(tabRenderer.render())
+                    tabToRenderer += tab -> tabRenderer
+                }
                 tab.setClosable(tabPanelModel.closeable)
                 itemsToContent += itemModel -> tab
                 tab.setOnClosed { _ => tabPanelModel.onClose(itemModel) }
                 tab
             }.asJavaCollection
-            for (itemsOp <- tabPanelModel.tabs) itemsOp match {
+            for (itemsOp <- $(tabPanelModel.tabs)) itemsOp match {
                 case SetList(itemModels) => pane.getTabs.setAll(tabModelToTabs(itemModels))
                 case AddItems(itemModels) => pane.getTabs.addAll(tabModelToTabs(itemModels))
                 case InsertItems(index, itemModels) => pane.getTabs.addAll(index, tabModelToTabs(itemModels))
                 case RemoveItems(index, amount) => pane.getTabs.remove(index, index + amount)
                 case RemoveItemObjs(itemModels) => pane.getTabs.removeAll(itemsToContent.filter(pair => itemModels.contains(pair._1)).values.asJavaCollection)
             }
+            pane.getTabs.addListener(new ListChangeListener[Tab] {
+                override def onChanged(c: ListChangeListener.Change[_ <: Tab]): Unit = {
+                    while (c.next()) {
+                        if (c.wasRemoved()) c.getRemoved.forEach { tab =>
+                            tabToRenderer(tab).dispose()
+                            tabListenStore(tab).dispose()
+                            tabToRenderer -= tab
+                            tabListenStore -= tab
+                            itemsToContent -= itemsToContent.find(_._2 == tab).get._1
+                        }
+                    }
+                }
+            })
+            for (selSubj <- tabPanelModel.selection) {
+                for (selectedItem <- $(selSubj)) pane.getSelectionModel.select(itemsToContent(selectedItem))
+                pane.getSelectionModel.selectedItemProperty().addListener(new ChangeListener[Tab] {
+                    override def changed(observable: ObservableValue[_ <: Tab], oldValue: Tab, newValue: Tab): Unit =
+                        for ((tab, _) <- itemsToContent.find(_._2 == newValue)) selSubj << tab
+                })
+            }
             DraggableTabs.decorate(pane)
             pane
+        }
+
+        override def dispose(): Unit = {
+            tabToRenderer.values.foreach(_.dispose())
+            tabToRenderer.clear()
+            tabListenStore.values.foreach(_.dispose())
+            tabListenStore.clear()
+            itemsToContent.clear()
+            super.dispose()
         }
     }
 
@@ -510,22 +660,39 @@ object FxRender {
     }
 
     class UiSplitPaneRenderer(paneModel: UiSplitPane)(implicit renderers: FxRenderers) extends Renderer[Node] {
+
+        private var elsRenderers = mutable.ArrayBuffer[Renderer[_ <: Node]]()
+
         override def render(): Node = {
             val pane = new SplitPane()
             pane.setOrientation(if (paneModel.orientation == UiHoriz) FxOrientation.HORIZONTAL else FxOrientation.VERTICAL)
-            pane.getItems.addAll(
-                renderers.renderer(paneModel.els._1).render(),
-                renderers.renderer(paneModel.els._2).render())
+            elsRenderers += renderers.renderer(paneModel.els._1)
+            elsRenderers += renderers.renderer(paneModel.els._2)
+
+            pane.getItems.addAll(elsRenderers.map(_.render()).asJava)
             pane.setDividerPosition(0, paneModel.proportion.toDouble / 100)
             pane
         }
+
+        override def dispose(): Unit = elsRenderers.foreach(_.dispose())
     }
 
     class UiComponentRenderer(comp: UiComponent)(implicit renderers: FxRenderers) extends Renderer[Node] {
+
+        private var renderer: Renderer[_ <: Node] = _
+
         override def render(): Node = {
             val widget = comp.content()
-            renderers.renderer(widget).render()
+            renderer = renderers.renderer(widget)
+            renderer.render()
         }
+
+        override def dispose(): Unit = renderer.dispose()
+    }
+
+    class UiObservingComponentRenderer(comp: UiObservingComponent)(implicit renderers: FxRenderers) extends UiComponentRenderer(comp) {
+
+        override def dispose(): Unit = {comp.dispose(); super.dispose() }
     }
 
     trait FxRenderers extends UiRenderer {
@@ -542,17 +709,20 @@ object FxRender {
             override def isDisposed: Boolean = disposed
         }
 
-        override def runApp(root: UiWidget): Unit = {
+        override def runApp(root: UiWidget, postAction: UiRenderer => Unit = null): Unit = {
             FxRender.rootContent = root
+            FxRender.postAction = postAction
             LauncherImpl.launchApplication(classOf[App], Array())
         }
 
         override def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit = {
+            val $ = new DisposeStore()
+            val renderer = FxRender.renderers.renderer(content)(FxRender.renderers)
             val dialog = new Stage(if (hideTitle) StageStyle.UNDECORATED else StageStyle.DECORATED)
 
-            applyContentToState(content, dialog, fullScreen = false)(FxRender.renderers)
+            applyContentToState(renderer.render(), dialog, fullScreen = false, panelBorder = hideTitle)
 
-            for (obs <- close; _ <- obs) {
+            for (obs <- close; _ <- $(obs)) {
                 dialog.close()
             }
 
@@ -560,6 +730,8 @@ object FxRender {
             dialog.initModality(Modality.WINDOW_MODAL)
             dialog.showAndWait()
             for (x <- close) x << {}
+            renderer.dispose()
+            $.dispose()
         }
 
         override def alert(alertType: AlertType, message: String): Unit = {
@@ -585,19 +757,21 @@ object FxRender {
             case x: UiTabPanel => new UiTabPanelRenderer(x)
             case x: UiTabPanelExt[_] => new UiTabPanelListOpsRenderer(x)
             case x: UiSplitPane => new UiSplitPaneRenderer(x)
+            case x: UiSeparator => new UiSeparatorRenderer(x)
+            case x: UiObservingComponent => new UiObservingComponentRenderer(x)
             case x: UiComponent => new UiComponentRenderer(x)
         }
 
-        override def runApp(root: UiWidget): Unit = {
+        override def runApp(root: UiWidget, postAction: UiRenderer => Unit = null): Unit = {
             FxRender.renderers = this
-            super.runApp(root)
+            super.runApp(root, postAction)
         }
 
     }
 
-    def grabFullContent(widget: UiWidget)(implicit renderers: FxRenderers): Pane = {
+    def grabFullContent(node: Node)(implicit renderers: FxRenderers): Pane = {
         val pane = new GridPane()
-        val contentNode = renderers.renderer(widget).render()
+        val contentNode = node // TODO DISPOSE MUST BE APPLIED
         GridPane.setHgrow(contentNode, Priority.ALWAYS)
         GridPane.setVgrow(contentNode, Priority.ALWAYS)
         GridPane.setFillWidth(contentNode, true)
@@ -606,8 +780,10 @@ object FxRender {
         pane
     }
 
-    def applyContentToState(widget: UiWidget, stage: Stage, fullScreen: Boolean)(implicit renderers: FxRenderers): Unit = {
-        val rootPane = grabFullContent(widget)
+    def applyContentToState(content: Node, stage: Stage, fullScreen: Boolean, panelBorder: Boolean = false): Unit = {
+        val rootPane = grabFullContent(content)
+        if (panelBorder)
+            rootPane.setBorder(new Border(new BorderStroke(Color.BLACK, BorderStrokeStyle.SOLID, CornerRadii.EMPTY, BorderWidths.DEFAULT)))
         if (fullScreen) {
             rootPane.setPrefSize(java.awt.Toolkit.getDefaultToolkit.getScreenSize.width * 0.9, java.awt.Toolkit.getDefaultToolkit.getScreenSize.height * 0.9)
             stage.setMaximized(true)
@@ -622,12 +798,15 @@ object FxRender {
     var rootContent: UiWidget = _
     var renderers: FxRenderers = _
     var primaryStage: Stage = _
+    var postAction: UiRenderer => Unit = _
 
     class App extends Application {
         override def start(primaryStage: Stage): Unit = {
             FxRender.primaryStage = primaryStage
-            applyContentToState(FxRender.rootContent, primaryStage, fullScreen = true)(FxRender.renderers)
+            val rootContent = FxRender.renderers.renderer(FxRender.rootContent)(FxRender.renderers).render()
+            applyContentToState(rootContent, primaryStage, fullScreen = true)
             primaryStage.show()
+            if (postAction != null) postAction(FxRender.renderers)
         }
     }
 

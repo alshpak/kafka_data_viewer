@@ -17,7 +17,7 @@ class PreFilterPane[T](val layoutData: String,
                        currentSelectedItems: Observable[Seq[T]],
                        applySelectedItems: Seq[T] => Unit,
                        filters: BehaviorSubject[Seq[(BehaviorSubject[String], BehaviorSubject[Seq[T]])]]
-                      ) extends UiComponent {
+                      ) extends UiObservingComponent {
 
     private val titleAll = "All"
     private val titleNothing = "Nothing"
@@ -32,7 +32,7 @@ class PreFilterPane[T](val layoutData: String,
     private val shownFilters = filters.map(titleAll +: titleNothing +: _.map(_._1.value))
     private val allowActions = currentNameTrimmed.map(name => !name.isEmpty && !name.equals(titleAll) && !name.equals(titleNothing))
 
-    for ((filterName, allItems, shownFilters) <- filterSelected.withLatestFrom(allItems, shownFilters)
+    for ((filterName, allItems, shownFilters) <- $(filterSelected.withLatestFrom(allItems, shownFilters))
          if shownFilters.contains(filterName))
         applySelectedItems(filterName match {
             case `titleAll` => allItems
@@ -40,10 +40,10 @@ class PreFilterPane[T](val layoutData: String,
             case name => filters.value.find(_._1.value == name).map(_._2.value).get
         })
 
-    for ((selection, name) <- onSave.withLatestFrom(combineLatest(currentSelectedItems, currentNameTrimmed)).map(_._2); if name.nonEmpty)
+    for ((selection, name) <- $(onSave.withLatestFrom(combineLatest(currentSelectedItems, currentNameTrimmed)).map(_._2)); if name.nonEmpty)
         filters << (filters.value.filterNot(_._1.value == name) :+ (behaviorSubject(name) -> behaviorSubject(selection)))
 
-    for (name <- onDelete.withLatestFrom(currentNameTrimmed).map(_._2))
+    for (name <- $(onDelete.withLatestFrom(currentNameTrimmed).map(_._2)))
         filters << filters.value.filterNot(_._1.value == name)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(
@@ -61,10 +61,10 @@ class SearchElementsPane[T](val layoutData: String,
                             selection: Subject[T],
                             compare: (T, String) => Boolean,
                             searchText: Subject[String] = publishSubject()
-                           ) extends UiComponent {
+                           ) extends UiObservingComponent {
 
     private var currentElements: Seq[T] = Seq()
-    for (elementsAndReset <- elements) {
+    for (elementsAndReset <- $(elements)) {
         currentElements = elementsAndReset._1
         updateSearchResults()
         if (elementsAndReset._2) {
@@ -74,7 +74,7 @@ class SearchElementsPane[T](val layoutData: String,
     }
 
     private val searchTextCurrent = behaviorSubject[String]("")
-    searchTextCurrent <<< searchText
+    (searchTextCurrent <<< searchText) ($)
     private val searchResultsLabel: Subject[String] = Subject.behaviorSubject("Type to search")
 
     private var searchResult: Seq[T] = Seq()
@@ -94,7 +94,7 @@ class SearchElementsPane[T](val layoutData: String,
         }
     }
 
-    for (searchString <- searchText) {
+    for (searchString <- $(searchText)) {
         currentElement = -1
         updateSearchResults()
         if (searchResult.nonEmpty) onNext onNext Unit
@@ -105,12 +105,12 @@ class SearchElementsPane[T](val layoutData: String,
         searchResultsLabel.onNext("Result " + (currentElement + 1) + " of " + searchResult.size)
     }
 
-    for (_ <- onNext) if (searchResult.nonEmpty) {
+    for (_ <- $(onNext)) if (searchResult.nonEmpty) {
         currentElement += 1
         if (currentElement >= searchResult.size) currentElement = 0
         setCurrentSearchElement()
     }
-    for (_ <- onPrev) if (searchResult.nonEmpty) {
+    for (_ <- $(onPrev)) if (searchResult.nonEmpty) {
         currentElement -= 1
         if (currentElement < 0) currentElement = searchResult.size - 1
         setCurrentSearchElement()
@@ -128,10 +128,10 @@ class SearchElementsPane[T](val layoutData: String,
 class SearchedTextDataPane(val layoutData: String,
                            text: Observable[String],
                            defaultSearch: Observable[String]
-                          ) extends UiComponent {
+                          ) extends UiObservingComponent {
     type SearchElement = (List[Char], Int)
     private val displayText: Subject[String] = publishSubject()
-    displayText <<< text
+    (displayText <<< text) ($)
 
     private val seachItems: Observable[Seq[SearchElement]] = text.map(s =>
         s.toCharArray.filterNot(p => p == '\r')
@@ -140,16 +140,16 @@ class SearchedTextDataPane(val layoutData: String,
                 .zipWithIndex)
     private val selection: Subject[SearchElement] = publishSubject()
     private val searchText: Subject[String] = publishSubject()
-    searchText <<< defaultSearch
+    (searchText <<< defaultSearch) ($)
     private val searchTextCurrent = behaviorSubject("")
-    searchTextCurrent <<< searchText
+    (searchTextCurrent <<< searchText) ($)
 
     //for (item <- seachItems; first <- item.headOption) selection onNext first
 
     private def compare(el: SearchElement, s: String) = el._1.startsWith(s.toCharArray)
 
     private val textSelection: Subject[(Int, Int)] = publishSubject()
-    textSelection <<< selection.map(s => (s._2, s._2 + searchTextCurrent.value.length)) //.delay(1000, TimeUnit.MILLISECONDS).observeOn(swtScheduler())
+    (textSelection <<< selection.map(s => (s._2, s._2 + searchTextCurrent.value.length))) ($) //.delay(1000, TimeUnit.MILLISECONDS).observeOn(swtScheduler())
 
     override def content(): UiWidget =
         UiPanel(layoutData, Grid("margin 2"), items = Seq(
@@ -158,7 +158,7 @@ class SearchedTextDataPane(val layoutData: String,
                 selection = selection,
                 compare = compare,
                 searchText = searchText),
-            UiStyledText("grow", multi = true, text = text.asPublishSubject, selection = textSelection)
+            UiStyledText("grow", multi = true, text = text.asPublishSubject($), selection = textSelection)
         ))
 }
 
@@ -169,7 +169,7 @@ class TableOutputDataPane[T](val layoutData: String,
                              fields: Seq[(String, T => String)],
                              valueField: T => String,
                              sorting: PartialFunction[String, (T, T) => Boolean]
-                            ) extends UiComponent {
+                            ) extends UiObservingComponent {
 
     private val displayRecords: Subject[ListChangeOp[T]] = publishSubject()
     private val cachedDisplayedRecords = displayRecords.fromListOps()
@@ -178,13 +178,13 @@ class TableOutputDataPane[T](val layoutData: String,
 
     private val selectedRecords = publishSubject[Seq[T]]()
     private val searchSelection = publishSubject[T]()
-    selectedRecords <<< searchSelection.map(Seq(_))
+    (selectedRecords <<< searchSelection.map(Seq(_)))($)
 
     private val selectedRecordValue: Subject[String] = publishSubject()
-    selectedRecordValue <<< selectedRecords.map(x => x.headOption.map(valueField).getOrElse(""))
+    (selectedRecordValue <<< selectedRecords.map(x => x.headOption.map(valueField).getOrElse("")))($)
     private val selectedRecordJSonValue = selectedRecordValue.map(beautifyJSon)
 
-    for (recordOp <- records) recordOp match {
+    for (recordOp <- $(records)) recordOp match {
         case ResetLogOp() =>
             // println("Reset!")
             displayRecords onNext SetList(Nil)
@@ -212,8 +212,7 @@ class TableOutputDataPane[T](val layoutData: String,
     case class FieldToColumn(title: String, data: T => String, onSort: Option[Subject[Boolean]] = None)
 
     private val fieldToCols = fields.map(field => FieldToColumn(title = field._1, data = field._2, onSort = if (sorting.isDefinedAt(field._1)) Some(publishSubject()) else None))
-    for (f2c <- fieldToCols; onSort <- f2c.onSort; asc <- onSort) sortRecords(f2c.title, asc = asc)
-    for (x <- onLoadNewData; y <- x) println("Read done ")
+    for (f2c <- fieldToCols; onSort <- f2c.onSort; asc <- $(onSort)) sortRecords(f2c.title, asc = asc)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("margin 2"), items = Seq(
         new SearchElementsPane[T]("growx", cachedRecordsSubj, searchSelection, compare, searchText),
@@ -224,7 +223,7 @@ class TableOutputDataPane[T](val layoutData: String,
                         selection = selectedRecords,
                         columns = fieldToCols.map(f2c => UiColumn[T](title = f2c.title, value = f2c.data, onSort = (asc: Boolean) => f2c.onSort.get << asc))
                     ),
-                    onLoadNewData.map(action => UiLink("growx", text = "Click to read next portion of data", onAction = action)))
+                    onLoadNewData.map(action => UiLink(text = "Click to read next portion of data", onAction = action)))
                         .filter(_.isDefined).map(_.get)),
                 UiTabPanel("grow", tabs = behaviorSubject(Seq(
                     UiTab(label = "Raw Output", content = new SearchedTextDataPane("grow", text = selectedRecordValue, defaultSearch = searchText)),
@@ -239,11 +238,11 @@ case class UiComboT[T](layoutData: String = "",
                        items: Observable[Seq[T]] = Observable.empty[Seq[T]](),
                        display: T => String,
                        selection: Subject[T],
-                       disabled: Observable[Boolean] = false) extends UiComponent {
+                       disabled: Observable[Boolean] = false) extends UiObservingComponent {
     private val selectionTextList = items.mapSeq(display)
     private val selectionText = behaviorSubject[String]("")
-    for (selection <- selection; text = display(selection); if text != selectionText.value) selectionText << text
-    for ((selectionText, items) <- selectionText.withLatestFrom(items)) {
+    for (selection <- $(selection); if display(selection) != selectionText.value) selectionText << display(selection)
+    for ((selectionText, items) <- $(selectionText.withLatestFrom(items))) {
         val textToItems = items.map(x => display(x) -> x).toMap
         if (textToItems.contains(selectionText))
             selection << textToItems(selectionText)

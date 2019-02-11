@@ -4,12 +4,12 @@ import java.net.URI
 import java.time.Instant
 
 import devtools.kafka_data_viewer.AppSettings.FilterData
+import devtools.kafka_data_viewer.AppUpdate.AppUpdateInfo
 import devtools.kafka_data_viewer.KafkaConnTopicsInfo._
 import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
 import devtools.kafka_data_viewer.kafkaconn.Connector.{ConsumerConnection, ProducerConnection, TopicsWithSizes}
 import devtools.kafka_data_viewer.kafkaconn.KafkaConnector
 import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, MessageType, StringMessage, ZipMessage}
-import devtools.kafka_data_viewer.ui.KafkaToolUpdate.UpdateUrl
 import devtools.kafka_data_viewer.ui._
 import devtools.lib.rxext.ListChangeOps.{AddItems, ListChangeOp, RemoveItemObjs, SetList}
 import devtools.lib.rxext.Observable.{just, merge}
@@ -20,33 +20,30 @@ import devtools.lib.rxui.FxRender.DefaultFxRenderes
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
 import io.reactivex.schedulers.Schedulers
-import org.apache.commons.cli.{DefaultParser, Options}
 import org.apache.kafka.common.errors.InterruptException
 
-import scala.collection.mutable
+import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.language.postfixOps
 
 class KafkaDataViewerAppPane(val layoutData: String = "",
-                             updateState: (AppUpdateState, UpdateUrl),
                              connections: BehaviorSubject[Seq[ConnectionDefinition]],
-                             filters: BehaviorSubject[Seq[FilterData]],
-                             groupName: String
-                            )(implicit uiRenderer: UiRenderer) extends UiComponent {
-
+                             filters: BehaviorSubject[Seq[FilterData]]
+                            )(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     case class ConnectionsSet(logging: ConsumerConnection, read: ConsumerConnection, master: ConsumerConnection, producer: ProducerConnection)
 
     private def connectToServices(connDef: ConnectionDefinition) = {
         val connector = new KafkaConnector(
             host = connDef.kafkaHost.value,
-            groupName = groupName)
+            groupName = connDef.group.value)
 
         ConnectionsSet(logging = connector.connectConsumer(), read = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
     }
 
 
     private val connectOps = behaviorSubject[ListChangeOp[ConnHandle]](SetList[ConnHandle](Seq()))
-    private val connected: Observable[Seq[ConnHandle]] = connectOps.fromListOps()
+    private val connected: Observable[Seq[ConnHandle]] = connectOps.fromListOps().withCachedLatest()
+    private val selected = publishSubject[ConnHandle]()
 
     private val onConnect = publishSubject[ConnectionDefinition]()
     private val onClose: Subject[ConnHandle] = publishSubject()
@@ -55,14 +52,9 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                              val connSet: ConnectionsSet,
                              val initTopicsAndSizes: TopicsWithSizes,
                              val closeHndl: BehaviorSubject[Boolean] = behaviorSubject(),
-                             val topicSettingsHndl: BehaviorSubject[Seq[(String, MessageType)]]) {
-        override def equals(obj: Any): Boolean = obj match {
-            case x: ConnHandle if x.connDef.name == connDef.name => true
-            case _ => false
-        }
-    }
+                             val topicSettingsHndl: BehaviorSubject[Seq[(String, MessageType)]])
 
-    for ((connectTo, connectedList) <- onConnect.withLatestFrom(connected); if !connectedList.exists(connectTo ==)) {
+    for ((connectTo, connectedList) <- $(onConnect.withLatestFrom(connected)); if !connectedList.exists(connectTo == _.connDef)) {
         val connectionSubject = publishSubject[Option[Either[String, ConnHandle]]]()
         val cancelConnection = publishSubject[Unit]()
         val connThread = new Thread(() =>
@@ -79,39 +71,37 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
             } catch {
                 case _: InterruptException =>
                 case e: Exception =>
-                    println("Error on connection")
                     e.printStackTrace()
                     connectionSubject << Some(Left(e.getMessage))
             })
         connThread.start()
-        for (_ <- cancelConnection) {connectionSubject << None; connectionSubject onComplete(); connThread.interrupt() }
+        for (_ <- $(cancelConnection)) {connectionSubject << None; connectionSubject onComplete(); connThread.interrupt() }
 
         val connectionDone: Observable[Option[Either[String, ConnHandle]]] = connectionSubject.observeOn(uiRenderer.uiScheduler())
 
-        for (connectResultOpt <- connectionDone; connectResult <- connectResultOpt) {
+        for (connectResultOpt <- $(connectionDone); connectResult <- connectResultOpt) {
             connectResult match {
-                case Right(connHndl) => connectOps << AddItems(Seq(connHndl))
+                case Right(connHndl) => connectOps << AddItems(Seq(connHndl)); selected << connHndl
                 case Left(error) => uiRenderer.alert(ErrorAlert, "Connection in cancelled; " + error)
             }
         }
 
         uiRenderer.runModal(
-            content = UiPanel("", Grid("cols 1"), items = Seq(
-                UiLabel(text = "Connecting to " + connectTo.kafkaHost),
+            content = UiPanel("", Grid("cols 1, margin 5"), items = Seq(
+                UiLabel(text = s"Connecting to ${connectTo.name.value} (${connectTo.kafkaHost.value})"),
                 UiButton(text = "Cancel", onAction = cancelConnection)
             )),
             hideTitle = true,
-            close = connectionDone.map[Any](_ => Unit).asPublishSubject
+            close = connectionDone.map[Any](_ => Unit).asPublishSubject($)
         )
     }
 
-    for (connHandle <- onClose) {
+    for (connHandle <- $(onClose)) {
         connHandle.closeHndl onNext true
         connectOps << RemoveItemObjs(Seq(connHandle))
     }
 
-    for (connHandle <- onClose.subscribeOn(Schedulers.newThread())) {
-        println("Close attempt")
+    for (connHandle <- $(onClose.subscribeOn(Schedulers.newThread()))) {
         connHandle.connSet.master.close()
         connHandle.connSet.logging.close()
         connHandle.connSet.read.close()
@@ -123,9 +113,11 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
         UiSplitPane("grow", orientation = UiHoriz, proportion = 15, els = (
                 UiTabPanel(tabs = Seq(
                     UiTab(label = "Connections List", content = new KafkaConnectionsListPane(connections = connections, onConnect = onConnect)))),
-                UiTabPanelExt[ConnHandle](tabs = connectOps,
+                UiTabPanelExt[ConnHandle](
+                    tabs = connectOps,
+                    selection = selected,
                     tab = (itemHndl: ConnHandle) => UiTab(
-                        label = itemHndl.connDef.kafkaHost,
+                        label = itemHndl.connDef.name,
                         content = new KafkaConnectionPane("",
                             connDef = itemHndl.connDef,
                             loggingConsumer = itemHndl.connSet.logging,
@@ -143,13 +135,6 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                 )
         ))
     ))
-
-    //        override def init(): Unit = {
-    //            if (!updateState._1.isInstanceOf[AppUpdateCurrent]) {
-    //                val closeHandle = PublishSubject.create[Any]()
-    //                ModalWindow.run(new UpdateInfoWindow(updateState, closeHandle), close = closeHandle)
-    //            }
-    //        }
 }
 
 object KafkaConnTopicsInfo {
@@ -170,9 +155,9 @@ case class AvroRegistriesManagement(
 
 class KafkaManageMessageTypesPane(val layoutData: String = "",
                                   avroRegistriesManagement: AvroRegistriesManagement
-                                 )(implicit uiRenderer: UiRenderer) extends UiComponent {
+                                 )(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
-    class ManageAvroConnectionsPane(val layoutData: String = "") extends UiComponent {
+    class ManageAvroConnectionsPane(val layoutData: String = "") extends UiObservingComponent {
 
         type TableItem = (String, Boolean)
 
@@ -185,9 +170,9 @@ class KafkaManageMessageTypesPane(val layoutData: String = "",
             var result: Option[String] = None
             val serverField = behaviorSubject(server)
             val onOk = publishSubject[Unit]()
-            for (_ <- onOk) result = Some(serverField.value)
+            for (_ <- $(onOk)) result = Some(serverField.value)
             val onClose = publishSubject[Unit]()
-            onClose <<< onOk
+            (onClose <<< onOk) ($)
 
             class ChangeServerPane(val layoutData: String = "") extends UiComponent {
 
@@ -206,7 +191,7 @@ class KafkaManageMessageTypesPane(val layoutData: String = "",
         }
 
         private val onRemove = publishSubject[Unit]()
-        for ((_, selection) <- onRemove.withLatestFrom(selection); item <- selection.headOption; if !item._2) avroRegistriesManagement.onRemoveServer(item._1)
+        for ((_, selection) <- $(onRemove.withLatestFrom(selection)); item <- selection.headOption; if !item._2) avroRegistriesManagement.onRemoveServer(item._1)
 
         override def content(): UiWidget = UiPanel(layoutData, Grid("cols 1"), items = Seq(
             UiLabel(text = "The list of Avro servers"),
@@ -238,11 +223,11 @@ class KafkaConnectionPane(val layoutData: String = "",
                           filters: BehaviorSubject[Seq[FilterData]],
                           topicToType: BehaviorSubject[Seq[(String, MessageType)]],
                           avroRegistires: BehaviorSubject[Seq[String]],
-                          closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiComponent {
+                          closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     type TopicName = String
     private val msgEncoders: String => MessageType = topic => StringMessage
-    private val typesRegistry = new TypesRegistry(topicToType, avroRegistires)
+    //private val typesRegistry = new TypesRegistry(topicToType, avroRegistires)
 
     private val refreshTopics: Subject[Unit] = publishSubject()
 
@@ -255,10 +240,8 @@ class KafkaConnectionPane(val layoutData: String = "",
         avroRegistires.map(avroRegistires => StringMessage +: ZipMessage +: avroRegistires.map(AvroMessage))
 
     private val applyMessageTypes = publishSubject[(Seq[TopicName], MessageType)]()
-    for ((topics, typeToApply) <- applyMessageTypes)
+    for ((topics, typeToApply) <- $(applyMessageTypes))
         topicToType << (topicToType.value.filterNot { case (topic, _) => topics.contains(topic) } ++ topics.map(_ -> typeToApply))
-
-    for (debug <- applyMessageTypes) println("Was attempt to change message types " + debug)
 
     private def manageMessageTypes(): Unit = {
 
@@ -289,14 +272,14 @@ class KafkaConnectionPane(val layoutData: String = "",
                 topicsList = topicsList,
                 filters = filters,
                 topicsMgmt = topicsData,
-                typesRegistry = typesRegistry,
+                //typesRegistry = typesRegistry,
                 closed = closed)),
             UiTab(label = "Read Topic", content = new ReadTopicPane("",
                 topicsList = topicsList,
                 masterCon = masterConsumer,
                 readCon = readDataConsumer,
                 topicsMgmt = topicsData,
-                typesRegistry = typesRegistry,
+                //typesRegistry = typesRegistry,
                 closed = closed)),
             UiTab(label = "Produce message", content = new ProduceMessagePane("",
                 consumer = masterConsumer,
@@ -309,29 +292,29 @@ class KafkaConnectionPane(val layoutData: String = "",
     ))
 }
 
-class UpdateInfoPane(val layoutData: String = "", val updateState: (AppUpdateState, UpdateUrl), onClose: Subject[Unit]) extends UiComponent {
+class UpdateInfoPane(val layoutData: String = "", val updateInfo: AppUpdateInfo, onClose: Subject[Unit]) extends UiObservingComponent {
     private val openUpdate = publishSubject[Unit]()
-    for (_ <- openUpdate) java.awt.Desktop.getDesktop.browse(new URI(updateState._2))
+    for (_ <- $(openUpdate)) {
+        java.awt.Desktop.getDesktop.browse(new URI(updateInfo.updateUrl))
+    }
 
-    override def content(): UiWidget = UiPanel(layout = Grid(), items = Seq(
-        UiLabel(text = "Update state is"),
-        UiLabel(text = updateState._1 match {
-            case AppUpdateUnavailable(reason) => "Update not available : " + reason
-            case AppUpdateRequired(version, newVersion) => s"Current version: $version; new version $newVersion is available"
-        }),
+    override def content(): UiWidget = UiPanel(layout = Grid("margin 5"), items = Seq(
+        UiLabel(text = "Current version: " + updateInfo.currentVersion),
+        UiLabel(text = "New version " + updateInfo.newVersion + " is available"),
         UiButton(text = "Click to open update site", onAction = openUpdate),
         UiButton(text = "Close", onAction = onClose)
     ))
 }
 
-
 object KafkaDataViewer {
+
 
     case class TopicRecord(partition: Int, offset: Long, time: Instant, topic: String, key: String, value: String, msgtype: MessageType = StringMessage)
 
     case class ConnectionDefinition(
                                            name: BehaviorSubject[String] = behaviorSubject(""),
                                            kafkaHost: BehaviorSubject[String] = behaviorSubject(""),
+                                           group: BehaviorSubject[String] = behaviorSubject(""),
                                            topicSettings: BehaviorSubject[Seq[(String, MessageType)]] = behaviorSubject(Seq()),
                                            avroRegistries: BehaviorSubject[Seq[String]] = behaviorSubject(Seq()))
 
@@ -341,24 +324,27 @@ object KafkaDataViewer {
             || record.key != null && record.key.contains(text)
             || record.value != null && record.value.contains(text))
 
-
     def main(args: Array[String]): Unit = {
 
-        val options = new Options()
-        options.addRequiredOption("n", "groupname", true, "Group name to connect to kafka server")
-
-        val cli = new DefaultParser().parse(options, args)
-        val groupName = cli.getOptionValue("n")
+        //        val options = new Options()
+        //        options.addRequiredOption("n", "groupname", true, "Group name to connect to kafka server")
+        //
+        //        val cli = new DefaultParser().parse(options, args)
+        //        val groupName = cli.getOptionValue("n")
 
         val appSettings = AppSettings.connect()
 
-
         DefaultFxRenderes.runApp(root = new KafkaDataViewerAppPane(
-            updateState = KafkaToolUpdate.retrieveUpdateState(),
             connections = appSettings.connections,
-            filters = appSettings.filters,
-            groupName = groupName
-        ))
+            filters = appSettings.filters
+        ), postAction = uiRenderer => {
+            implicit val ec: ExecutionContextExecutor = scala.concurrent.ExecutionContext.global
+            Future { AppUpdate.verify() }.onComplete(r => {
+                val close = publishSubject[Unit]()
+                for (op <- r; upd <- op) uiRenderer.uiScheduler().scheduleDirect(() =>
+                    uiRenderer.runModal(new UpdateInfoPane("", upd, close), close = close))
+            })
+        })
 
     }
 
