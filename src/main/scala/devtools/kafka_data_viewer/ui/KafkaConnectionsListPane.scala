@@ -11,8 +11,7 @@ import scala.language.postfixOps
 
 class KafkaConnectionsListPane(val layoutData: String = "",
                                connections: BehaviorSubject[Seq[ConnectionDefinition]],
-                               onConnect: Subject[ConnectionDefinition],
-                               defaultGroup: String
+                               onConnect: Subject[ConnectionDefinition]
                               )(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     private val onAdd = publishSubject[Unit]()
@@ -24,7 +23,6 @@ class KafkaConnectionsListPane(val layoutData: String = "",
         val applyHandle = publishSubject[Unit]()
         val closeHandle = publishSubject[Unit]()
         val newConnection = ConnectionDefinition()
-        newConnection.group << defaultGroup
         for (conn <- $(applyHandle)) connections << connections.value :+ newConnection
         uiRenderer.runModal(new ConfigureConnectionWindow("", newConnection, applyHandle, closeHandle), close = closeHandle)
     }
@@ -72,24 +70,20 @@ class ConfigureConnectionWindow(
     for (_ <- $(onOk)) {
         conn.name << name.value.trim
         conn.kafkaHost << host.value.trim
-        conn.group << group.value.trim
         onApply onNext Unit
         onClose onNext Unit
     }
     private val name = behaviorSubject(conn.name.value)
     private val host = behaviorSubject[String](conn.kafkaHost.value)
-    private val group = behaviorSubject[String](conn.group.value)
 
-    private val applyAllowed = Observable.combineLatest(name, host, group)
-            .map(x => !x._1.trim.isEmpty && !x._2.trim.isEmpty && !x._3.trim.isEmpty)
+    private val applyAllowed = Observable.combineLatest(name, host)
+            .map(x => !x._1.trim.isEmpty && !x._2.trim.isEmpty)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid("cols 2,margin 5"), items = Seq(
         UiLabel(text = "Connection Name"),
         UiText("growx", text = name),
         UiLabel(text = "Kafka Host"),
         UiText("growx", text = host),
-        UiLabel(text = "Consumer Group"),
-        UiText("growx", text = group),
         UiSeparator("colspan 2, growx, graby, valign T", orientation = UiHoriz),
         UiPanel("colspan 2, halign R", Grid("cols 2,margin 2"), items = Seq(
             UiButton(text = "Cancel", onAction = onClose, cancelButton = true),

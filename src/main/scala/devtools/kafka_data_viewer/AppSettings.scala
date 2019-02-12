@@ -47,9 +47,9 @@ object AppSettings {
     def withres[T <: AutoCloseable, R](t: T)(f: T => R): R = try f(t) finally t.close()
 
 
-    def connect(defaultGroup: String): AppSettings = {
+    def connect(): AppSettings = {
 
-        val $  = new DisposeStore()
+        val $ = new DisposeStore()
 
         val appPropsFile = new File("application.setting.yml")
         if (!appPropsFile.exists()) {
@@ -127,7 +127,6 @@ object AppSettings {
         root.listNodes[ConnectionDefinition]("connections", connections, ConnectionDefinition(), (item, node) => {
             node.property("name", item.name)
             node.property("kafkaHost", item.kafkaHost)
-            node.property("group", item.group, defaultGroup)
             node.listStrings("avroRegistries", item.avroRegistries)
             node.listCustom("topicsSettings", item.topicSettings)
         })

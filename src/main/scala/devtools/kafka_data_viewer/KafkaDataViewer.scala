@@ -20,7 +20,6 @@ import devtools.lib.rxui.FxRender.DefaultFxRenderes
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
 import io.reactivex.schedulers.Schedulers
-import org.apache.commons.cli.{DefaultParser, Options}
 import org.apache.kafka.common.errors.InterruptException
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
@@ -28,16 +27,14 @@ import scala.language.postfixOps
 
 class KafkaDataViewerAppPane(val layoutData: String = "",
                              connections: BehaviorSubject[Seq[ConnectionDefinition]],
-                             filters: BehaviorSubject[Seq[FilterData]],
-                             defaultGroup: String
+                             filters: BehaviorSubject[Seq[FilterData]]
                             )(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     case class ConnectionsSet(logging: ConsumerConnection, read: ConsumerConnection, master: ConsumerConnection, producer: ProducerConnection)
 
     private def connectToServices(connDef: ConnectionDefinition) = {
         val connector = new KafkaConnector(
-            host = connDef.kafkaHost.value,
-            groupName = connDef.group.value)
+            host = connDef.kafkaHost.value)
 
         ConnectionsSet(logging = connector.connectConsumer(), read = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
     }
@@ -117,8 +114,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                     UiTab(label = "Connections List",
                         content = new KafkaConnectionsListPane(
                             connections = connections,
-                            onConnect = onConnect,
-                            defaultGroup = defaultGroup
+                            onConnect = onConnect
                         )))),
                 UiTabPanelExt[ConnHandle](
                     tabs = connectOps,
@@ -321,7 +317,6 @@ object KafkaDataViewer {
     case class ConnectionDefinition(
                                            name: BehaviorSubject[String] = behaviorSubject(""),
                                            kafkaHost: BehaviorSubject[String] = behaviorSubject(""),
-                                           group: BehaviorSubject[String] = behaviorSubject(""),
                                            topicSettings: BehaviorSubject[Seq[(String, MessageType)]] = behaviorSubject(Seq()),
                                            avroRegistries: BehaviorSubject[Seq[String]] = behaviorSubject(Seq()))
 
@@ -333,19 +328,18 @@ object KafkaDataViewer {
 
     def main(args: Array[String]): Unit = {
 
-        val options = new Options()
-        options.addOption("n", "groupname", true, "Group name to connect to kafka server")
-
-        val cli = new DefaultParser().parse(options, args)
-        val groupName = cli.getOptionValue("n")
-
-        val defaultGroup = Option(groupName).getOrElse("local.connection")
-        val appSettings = AppSettings.connect(defaultGroup = defaultGroup)
+        //        val options = new Options()
+        //        options.addOption("n", "groupname", true, "Group name to connect to kafka server")
+        //
+        //        val cli = new DefaultParser().parse(options, args)
+        //        val groupName = cli.getOptionValue("n")
+        //
+        //        val defaultGroup = Option(groupName).getOrElse("local.connection")
+        val appSettings = AppSettings.connect()
 
         DefaultFxRenderes.runApp(root = new KafkaDataViewerAppPane(
             connections = appSettings.connections,
-            filters = appSettings.filters,
-            defaultGroup = defaultGroup
+            filters = appSettings.filters
         ), postAction = uiRenderer => {
             implicit val ec: ExecutionContextExecutor = scala.concurrent.ExecutionContext.global
             Future { AppUpdate.verify() }.onComplete(r => {

@@ -1,7 +1,7 @@
 package devtools.kafka_data_viewer.kafkaconn
 
 import java.time.Duration.ofSeconds
-import java.time.{Duration, Instant}
+import java.time.Instant
 import java.util
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
@@ -13,7 +13,7 @@ import devtools.lib.rxui.DisposeStore
 import org.apache.kafka.clients.consumer.{ConsumerConfig, ConsumerRecord, KafkaConsumer}
 import org.apache.kafka.clients.producer.{KafkaProducer, Partitioner, ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.errors.InterruptException
-import org.apache.kafka.common.serialization.{ByteArrayDeserializer, ByteArraySerializer, StringSerializer}
+import org.apache.kafka.common.serialization.{ByteArrayDeserializer, ByteArraySerializer}
 import org.apache.kafka.common.{Cluster, PartitionInfo, TopicPartition}
 
 import scala.collection.JavaConverters._
@@ -21,21 +21,20 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.language.postfixOps
 
-class KafkaConnector(host: String,
-                     groupName: String) extends Connector {
+class KafkaConnector(host: String) extends Connector {
 
 
     private val consumers = ArrayBuffer[ConsumerConnection]()
     private val producers = ArrayBuffer[ProducerConnection]()
 
     override def connectConsumer(): ConsumerConnection = {
-        val connection = new KafkaConsumerConnection(host, groupName)
+        val connection = new KafkaConsumerConnection(host)
         consumers += connection
         connection
     }
 
     override def connectProducer(): ProducerConnection = {
-        val connection = new KafkaProducerConnection(host, groupName)
+        val connection = new KafkaProducerConnection(host)
         producers += connection
         connection
     }
@@ -51,12 +50,10 @@ object Counter {
     val counter = new AtomicInteger(0)
 }
 
-class KafkaConsumerConnection(host: String,
-                              groupName: String) extends ConsumerConnection {
+class KafkaConsumerConnection(host: String) extends ConsumerConnection {
 
     private val consumerProps = Map(
         "bootstrap.servers" -> host
-        , "group.id" -> groupName
         , "key.deserializer" -> classOf[ByteArrayDeserializer].getName
         , "value.deserializer" -> classOf[ByteArrayDeserializer].getName
         , "enable.auto.commit" -> "false"
@@ -140,8 +137,8 @@ class KafkaConsumerConnection(host: String,
             }
 
             val nextRecords: Unit => Seq[GenRecord] = _ =>
-                if (assignment.isEmpty) {try Thread.sleep(1000) catch { case e: InterruptedException =>  }; Seq() }
-                else try consumer.poll(ofSeconds(1)).asScala.toSeq catch { case e: InterruptException => Seq() }
+                if (assignment.isEmpty) {try Thread.sleep(1000) catch {case e: InterruptedException =>}; Seq() }
+                else try consumer.poll(ofSeconds(1)).asScala.toSeq catch {case e: InterruptException => Seq()}
 
 
             for (records <- Stream.continually(reassign.andThen(nextRecords)(getNewTopics())).takeWhile(_ => !closed))
@@ -203,8 +200,7 @@ class KafkaConsumerConnection(host: String,
 
 }
 
-class KafkaProducerConnection(host: String,
-                              groupName: String) extends ProducerConnection {
+class KafkaProducerConnection(host: String) extends ProducerConnection {
 
     private val producerProps = Map(
         ProducerConfig.BOOTSTRAP_SERVERS_CONFIG -> host,
@@ -217,9 +213,9 @@ class KafkaProducerConnection(host: String,
 
     override def send(topic: String, key: Array[Byte], value: Array[Byte], partition: PartitionerMode): Unit = {
         try {
-        println("Try to send message!")
-        CustomPartitioner.partitionMode = partition
-        producer.send(new ProducerRecord(topic, key, value))
+            println("Try to send message!")
+            CustomPartitioner.partitionMode = partition
+            producer.send(new ProducerRecord(topic, key, value))
         } catch {
             case e: Exception => e.printStackTrace()
         }
