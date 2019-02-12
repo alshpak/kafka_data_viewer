@@ -1,5 +1,5 @@
 # kafka_data_viewer
-Tool that providing ability to access kafka data - items in topics and kafka metadata
+Desctop UI Tool that providing ability to read and publish kafka records.
 
 # Description
 
