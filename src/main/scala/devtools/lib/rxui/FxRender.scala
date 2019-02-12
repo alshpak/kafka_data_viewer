@@ -292,7 +292,7 @@ object FxRender {
             }
 
             for (handler <- tableModel.onDblClick) tableView.setOnMouseClicked((event: MouseEvent) =>
-                if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY)
+                if (event.getClickCount == 2 && event.getButton == MouseButton.PRIMARY && tableView.getSelectionModel.getSelectedItem != null)
                     handler(tableView.getSelectionModel.getSelectedItem))
 
             def menuToItems(parent: ContextMenu)(itemModel: UiMenuItem): MenuItem =

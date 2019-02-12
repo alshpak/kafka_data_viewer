@@ -47,7 +47,7 @@ class PreFilterPane[T](val layoutData: String,
         filters << filters.value.filterNot(_._1.value == name)
 
     override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(
-        UiLabel("growx", text = just("Pre-filter\n - type name to save\n - select from list to use")),
+        UiLabel("growx", text = just("Pre-filter (type name to save, select from list to use)")),
         UiPanel("growx", Grid("cols 3,margin 2"), items = Seq(
             UiCombo("growx", text = currentName, selection = filterSelected, items = shownFilters),
             UiButton(text = "Save", onAction = onSave, disabled = allowActions.map(!_)),
