@@ -47,8 +47,10 @@ class KafkaConnectionsListPane(val layoutData: String = "",
         if (connSeq.size == 1) connMenu(connSeq.head) else Seq()
     )
 
-    private val nameChanges = connections.flatMap(conSeq => from(conSeq.map(_.name)).flatMap(x => x))
-    private val sortedConnections: Observable[Seq[ConnectionDefinition]] = combineLatest(connections, nameChanges).map(_._1).map(connSeq => connSeq.sortBy(_.name.value))
+    private val nameChanges = connections
+            .flatMap(conSeq => from(conSeq.map(_.name))).flatMap(x => x)
+    private val sortedConnections = combineLatest(connections, nameChanges).map(_._1)
+            .map(connSeq => connSeq.sortBy(_.name.value))
 
     override def content(): UiWidget = UiPanel("", Grid(), items = Seq(
         UiPanel("", Grid("margin 5"), items = Seq(UiButton(text = "Add Connection", onAction = onAdd))),

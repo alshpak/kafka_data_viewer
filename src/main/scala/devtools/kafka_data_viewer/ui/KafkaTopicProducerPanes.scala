@@ -64,7 +64,7 @@ class ProducerPane(val layoutData: String,
     }
     private val producerClosed = publishSubject[ProducerEntry]()
     for (topicData <- $(producerClosed))
-        settings << settings.value.filterNot(topicData ==)
+        settings << settings.value.filterNot(topicData.settings ==)
 
     private val tabsOrdered = publishSubject[Seq[(ProducerEntry, Int)]]()
     for (ordersSeq <- $(tabsOrdered); (entry, order) <- ordersSeq)
