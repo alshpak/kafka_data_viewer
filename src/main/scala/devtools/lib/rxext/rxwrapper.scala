@@ -47,6 +47,7 @@ trait Observable[T] {
 //    def asPublishSubject: Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< this; subject }
 
     def withCachedLatest(): Observable[T] = Observable[T] { val c = wrapped.replay(1); c.connect(); c }
+
 }
 
 trait Subject[T] extends Observable[T] {
@@ -84,6 +85,8 @@ object Observable {
     def empty[T](): Observable[T] = JObservable.empty[T]()
 
     def just[T](items: T*): Observable[T] = JObservable.fromArray[T](items: _*)
+
+    def from[T](items: Seq[T]): Observable[T] = JObservable.fromIterable[T](items.asJavaCollection)
 
     def combineLatest[T1, T2](t1: Observable[T1], t2: Observable[T2]): Observable[(T1, T2)] =
         JObservable.combineLatest[T1, T2, (T1, T2)](t1.wrapped, t2.wrapped, (t1r: T1, t2r: T2) => (t1r, t2r))

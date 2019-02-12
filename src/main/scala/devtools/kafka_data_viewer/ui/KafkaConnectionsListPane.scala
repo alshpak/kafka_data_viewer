@@ -1,13 +1,13 @@
 package devtools.kafka_data_viewer.ui
 
+import scala.language.postfixOps
+
 import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
-import devtools.lib.rxext.Observable.combineLatest
+import devtools.lib.rxext.Observable.{combineLatest, from, just}
 import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
-
-import scala.language.postfixOps
 
 class KafkaConnectionsListPane(val layoutData: String = "",
                                connections: BehaviorSubject[Seq[ConnectionDefinition]],
@@ -47,10 +47,13 @@ class KafkaConnectionsListPane(val layoutData: String = "",
         if (connSeq.size == 1) connMenu(connSeq.head) else Seq()
     )
 
+    private val nameChanges = connections.flatMap(conSeq => from(conSeq.map(_.name)).flatMap(x => x))
+    private val sortedConnections: Observable[Seq[ConnectionDefinition]] = combineLatest(connections, nameChanges).map(_._1).map(connSeq => connSeq.sortBy(_.name.value))
+
     override def content(): UiWidget = UiPanel("", Grid(), items = Seq(
         UiPanel("", Grid("margin 5"), items = Seq(UiButton(text = "Add Connection", onAction = onAdd))),
         UiList[ConnectionDefinition]("grow",
-            items = connections,
+            items = sortedConnections,
             valueProvider = con => combineLatest(con.name, con.kafkaHost)
                     .map(x => s"${x._1} (${x._2})"),
             selection = connSelected,

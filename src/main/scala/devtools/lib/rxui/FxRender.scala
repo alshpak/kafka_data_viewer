@@ -2,10 +2,11 @@ package devtools.lib.rxui
 
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import scala.collection.JavaConverters._
+import scala.collection.mutable
+import scala.language.{implicitConversions, postfixOps}
 
 import com.sun.javafx.application.LauncherImpl
-import devtools.lib.rxext.ListChangeOps.{AddItems, InsertItems, RemoveItemObjs, RemoveItems, SetList}
-import devtools.lib.rxext.{Observable, Subject}
 import io.reactivex.Scheduler
 import io.reactivex.Scheduler.Worker
 import io.reactivex.disposables.Disposable
@@ -15,16 +16,16 @@ import javafx.beans.value.{ChangeListener, ObservableValue}
 import javafx.collections.{ListChangeListener, ObservableList}
 import javafx.event.ActionEvent
 import javafx.geometry.{HPos, Insets, VPos, Orientation => FxOrientation}
+import javafx.scene.control.TabPane.TabClosingPolicy
 import javafx.scene.control.{Alert, Button, ComboBox, ContextMenu, Control, IndexRange, Label, ListCell, ListView, Menu, MenuItem, MultipleSelectionModel, SelectionMode, SelectionModel, Separator, SplitPane, Tab, TabPane, TableColumn, TableView, TextArea, TextField, TextInputControl, TreeItem, TreeTableColumn, TreeTableView}
-import javafx.scene.input.{ClipboardContent, ContextMenuEvent, KeyCode, KeyCodeCombination, KeyCombination, MouseButton, MouseEvent, TransferMode}
+import javafx.scene.input.{ClipboardContent, ContextMenuEvent, MouseButton, MouseEvent, TransferMode}
 import javafx.scene.layout.{Border, BorderStroke, BorderStrokeStyle, BorderWidths, CornerRadii, GridPane, Pane, Priority}
 import javafx.scene.paint.Color
 import javafx.scene.{Node, Scene}
 import javafx.stage.{Modality, Stage, StageStyle}
 
-import scala.collection.JavaConverters._
-import scala.collection.mutable
-import scala.language.implicitConversions
+import devtools.lib.rxext.ListChangeOps.{AddItems, InsertItems, RemoveItemObjs, RemoveItems, SetList}
+import devtools.lib.rxext.{Observable, Subject}
 
 object FxRender {
 
@@ -535,26 +536,28 @@ object FxRender {
     }
 
     class UiTabPanelListOpsRenderer[T](tabPanelModel: UiTabPanelExt[T])(implicit renderers: FxRenderers) extends ObservingRenderer[Node] {
-        private val tabToRenderer = mutable.HashMap[Tab, Renderer[_]]()
-        private val tabListenStore = mutable.HashMap[Tab, DisposeStore]()
-        private val itemsToContent = mutable.HashMap[T, Tab]()
+
+        case class TabData(item: T, var renderer: Renderer[_ <: Node] = null, $: DisposeStore = new DisposeStore(), var moving: Boolean = false)
+
+        implicit class TabDataAccess(tab: Tab) {def data: TabData = tab.getUserData.asInstanceOf[TabData]}
+
+        private val pane = new TabPane()
 
         override def render(): Node = {
-            val pane = new TabPane()
+            pane.setTabClosingPolicy(TabClosingPolicy.ALL_TABS)
             val tabModelToTabs: Seq[T] => java.util.Collection[Tab] = _.map { itemModel =>
                 val tabModel = tabPanelModel.tab(itemModel)
                 val tab = new Tab()
-                val $tab$ = new DisposeStore()
-                tabListenStore += tab -> $tab$
-                for (label <- $tab$(tabModel.label)) tab.setText(label)
-                for (content <- $tab$(tabModel.content)) {
-                    if (tabToRenderer.contains(tab)) tabToRenderer(tab).dispose()
-                    val tabRenderer = renderers.renderer(content)
-                    tab.setContent(tabRenderer.render())
-                    tabToRenderer += tab -> tabRenderer
+                tab.setUserData(TabData(itemModel))
+                val tabLabel = new Label("", tab.getGraphic)
+                tab.setGraphic(tabLabel)
+                for (label <- tab.data.$(tabModel.label)) tabLabel.setText(label)
+                for (content <- tab.data.$(tabModel.content)) {
+                    Option(tab.data.renderer).foreach(_.dispose())
+                    tab.data.renderer = renderers.renderer(content)
+                    tab.setContent(tab.data.renderer.render())
                 }
                 tab.setClosable(tabPanelModel.closeable)
-                itemsToContent += itemModel -> tab
                 tab.setOnClosed { _ => tabPanelModel.onClose(itemModel) }
                 tab
             }.asJavaCollection
@@ -563,54 +566,50 @@ object FxRender {
                 case AddItems(itemModels) => pane.getTabs.addAll(tabModelToTabs(itemModels))
                 case InsertItems(index, itemModels) => pane.getTabs.addAll(index, tabModelToTabs(itemModels))
                 case RemoveItems(index, amount) => pane.getTabs.remove(index, index + amount)
-                case RemoveItemObjs(itemModels) => pane.getTabs.removeAll(itemsToContent.filter(pair => itemModels.contains(pair._1)).values.asJavaCollection)
+                case RemoveItemObjs(itemModels) => pane.getTabs.removeAll(pane.getTabs.asScala.filter(tab => itemModels.contains(tab.data.item)).asJava)
             }
             pane.getTabs.addListener(new ListChangeListener[Tab] {
-                override def onChanged(c: ListChangeListener.Change[_ <: Tab]): Unit = {
-                    while (c.next()) {
-                        if (c.wasRemoved()) c.getRemoved.forEach { tab =>
-                            tabToRenderer(tab).dispose()
-                            tabListenStore(tab).dispose()
-                            tabToRenderer -= tab
-                            tabListenStore -= tab
-                            itemsToContent -= itemsToContent.find(_._2 == tab).get._1
-                        }
-                    }
-                }
+                override def onChanged(c: ListChangeListener.Change[_ <: Tab]): Unit =
+                    while (c.next())
+                        if (c.wasRemoved()) c.getRemoved.asScala
+                                .filterNot(_.data.moving)
+                                .foreach { tab => tab.data.renderer.dispose(); tab.data.$.dispose() }
             })
             for (selSubj <- tabPanelModel.selection) {
-                for (selectedItem <- $(selSubj)) pane.getSelectionModel.select(itemsToContent(selectedItem))
+                for (selectedItem <- $(selSubj))
+                    pane.getSelectionModel.select(
+                        pane.getTabs.asScala.find(tab => tab.data.item == selectedItem).get
+                    )
                 pane.getSelectionModel.selectedItemProperty().addListener(new ChangeListener[Tab] {
                     override def changed(observable: ObservableValue[_ <: Tab], oldValue: Tab, newValue: Tab): Unit =
-                        for ((tab, _) <- itemsToContent.find(_._2 == newValue)) selSubj << tab
+                        if (newValue != null)    selSubj << newValue.data.item
                 })
             }
-            DraggableTabs.decorate(pane)
+            val moveTab = (tab: Tab, pos: Int) => {
+                tab.data.moving = true
+                pane.getTabs.remove(tab)
+                pane.getTabs.add(pos, tab)
+                pane.getSelectionModel.select(tab)
+                tab.data.moving = false
+                tabPanelModel onTabsOrdered pane.getTabs.asScala.map(tab => tab.data.item).zipWithIndex
+            }
+            DraggableTabs.decorate(pane, moveTab)
             pane
         }
 
         override def dispose(): Unit = {
-            tabToRenderer.values.foreach(_.dispose())
-            tabToRenderer.clear()
-            tabListenStore.values.foreach(_.dispose())
-            tabListenStore.clear()
-            itemsToContent.clear()
+            pane.getTabs.forEach { tab => tab.data.renderer.dispose(); tab.data.$.dispose() }
             super.dispose()
         }
     }
 
     object DraggableTabs {
 
-        def decorate[T](tabPane: TabPane): Unit = {
+        def decorate[T](tabPane: TabPane, moveTab: (Tab, Int) => Any): Unit = {
             val decorId = UUID.randomUUID().toString
             var currentDraggingTab: Tab = null
 
             def decorateTab(tab: Tab): Unit = {
-                for (txt <- Option(tab.getText).filter(!_.isEmpty)) {
-                    val label = new Label(txt, tab.getGraphic)
-                    tab.setText(null)
-                    tab.setGraphic(label)
-                }
                 val graphic = tab.getGraphic
                 graphic.setOnDragDetected { e =>
                     val dragboard = graphic.startDragAndDrop(TransferMode.MOVE)
@@ -632,9 +631,7 @@ object FxRender {
                             currentDraggingTab != null &&
                             currentDraggingTab.getGraphic != graphic) {
                         val idx = tabPane.getTabs.indexOf(tab)
-                        tabPane.getTabs.remove(currentDraggingTab)
-                        tabPane.getTabs.add(idx, currentDraggingTab)
-                        tabPane.getSelectionModel.select(currentDraggingTab)
+                        moveTab(currentDraggingTab, idx)
                     }
                 }
                 graphic.setOnDragDone(_ => currentDraggingTab = null)
@@ -771,7 +768,7 @@ object FxRender {
 
     def grabFullContent(node: Node)(implicit renderers: FxRenderers): Pane = {
         val pane = new GridPane()
-        val contentNode = node // TODO DISPOSE MUST BE APPLIED
+        val contentNode = node
         GridPane.setHgrow(contentNode, Priority.ALWAYS)
         GridPane.setVgrow(contentNode, Priority.ALWAYS)
         GridPane.setFillWidth(contentNode, true)

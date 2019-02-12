@@ -2,11 +2,15 @@ package devtools.kafka_data_viewer
 
 import java.net.URI
 import java.time.Instant
+import scala.concurrent.{ExecutionContextExecutor, Future}
+import scala.language.postfixOps
 
-import devtools.kafka_data_viewer.AppSettings.FilterData
+import io.reactivex.schedulers.Schedulers
+import org.apache.kafka.common.errors.InterruptException
+
 import devtools.kafka_data_viewer.AppUpdate.AppUpdateInfo
 import devtools.kafka_data_viewer.KafkaConnTopicsInfo._
-import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
+import devtools.kafka_data_viewer.KafkaDataViewer.{ConnectionDefinition, FilterData, ProducerSettings}
 import devtools.kafka_data_viewer.kafkaconn.Connector.{ConsumerConnection, ProducerConnection, TopicsWithSizes}
 import devtools.kafka_data_viewer.kafkaconn.KafkaConnector
 import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, MessageType, StringMessage, ZipMessage}
@@ -19,11 +23,6 @@ import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.FxRender.DefaultFxRenderes
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
-import io.reactivex.schedulers.Schedulers
-import org.apache.kafka.common.errors.InterruptException
-
-import scala.concurrent.{ExecutionContextExecutor, Future}
-import scala.language.postfixOps
 
 class KafkaDataViewerAppPane(val layoutData: String = "",
                              connections: BehaviorSubject[Seq[ConnectionDefinition]],
@@ -131,6 +130,7 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
                             filters = filters,
                             closed = itemHndl.closeHndl.value,
                             avroRegistires = itemHndl.connDef.avroRegistries,
+                            producerSettings = itemHndl.connDef.producers,
                             topicToType = itemHndl.topicSettingsHndl)),
                     closeable = true,
                     onClose = el => onClose onNext el,
@@ -226,6 +226,7 @@ class KafkaConnectionPane(val layoutData: String = "",
                           filters: BehaviorSubject[Seq[FilterData]],
                           topicToType: BehaviorSubject[Seq[(String, MessageType)]],
                           avroRegistires: BehaviorSubject[Seq[String]],
+                          producerSettings: BehaviorSubject[Seq[ProducerSettings]],
                           closed: => Boolean)(implicit uiRenderer: UiRenderer) extends UiObservingComponent {
 
     type TopicName = String
@@ -284,9 +285,10 @@ class KafkaConnectionPane(val layoutData: String = "",
                 topicsMgmt = topicsData,
                 //typesRegistry = typesRegistry,
                 closed = closed)),
-            UiTab(label = "Produce message", content = new ProduceMessagePane("",
+            UiTab(label = "Produce message", content = new ProducerPane("",
                 consumer = masterConsumer,
                 producer = producer,
+                settings = producerSettings,
                 topicsList = topicsList,
                 topicsMgmt = topicsData,
                 msgEncoders = msgEncoders)),
@@ -311,14 +313,27 @@ class UpdateInfoPane(val layoutData: String = "", val updateInfo: AppUpdateInfo,
 
 object KafkaDataViewer {
 
+    type FilterData = (BehaviorSubject[String], BehaviorSubject[Seq[String]])
+
+    type TopicToMessageType = (String, MessageType)
 
     case class TopicRecord(partition: Int, offset: Long, time: Instant, topic: String, key: String, value: String, msgtype: MessageType = StringMessage)
+
+    case class ProducerSettings(
+                                       custom: BehaviorSubject[Boolean] = behaviorSubject(true),
+                                       topic: BehaviorSubject[String] = behaviorSubject(""),
+                                       msgType: BehaviorSubject[MessageType] = behaviorSubject(StringMessage),
+                                       partition: BehaviorSubject[Option[Int]] = behaviorSubject(None),
+                                       key: BehaviorSubject[String] = behaviorSubject(""),
+                                       value: BehaviorSubject[String] = behaviorSubject(""),
+                                       order: BehaviorSubject[Int] = behaviorSubject(-1))
 
     case class ConnectionDefinition(
                                            name: BehaviorSubject[String] = behaviorSubject(""),
                                            kafkaHost: BehaviorSubject[String] = behaviorSubject(""),
                                            topicSettings: BehaviorSubject[Seq[(String, MessageType)]] = behaviorSubject(Seq()),
-                                           avroRegistries: BehaviorSubject[Seq[String]] = behaviorSubject(Seq()))
+                                           avroRegistries: BehaviorSubject[Seq[String]] = behaviorSubject(Seq()),
+                                           producers: BehaviorSubject[Seq[ProducerSettings]] = behaviorSubject(Seq()))
 
     def isNumber(s: String): Boolean = try {s.toLong; true} catch {case _: Exception => false}
 

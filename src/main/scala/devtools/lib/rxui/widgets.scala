@@ -1,14 +1,15 @@
 package devtools.lib.rxui
 
+import scala.collection.mutable
+import scala.language.implicitConversions
+
+import io.reactivex.Scheduler
+import io.reactivex.disposables.Disposable
+
 import devtools.lib.rxext.ListChangeOps.ListChangeOp
 import devtools.lib.rxext.Observable.{empty, just}
 import devtools.lib.rxext.{Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
-import io.reactivex.Scheduler
-import io.reactivex.disposables.Disposable
-
-import scala.collection.mutable
-import scala.language.implicitConversions
 
 trait Listanable[T] {
     def foreach(t: T => Unit): Unit
@@ -147,7 +148,9 @@ case class UiTabPanelExt[T](layoutData: String = "",
                             closeable: Boolean = false,
                             onClose: T => Any = (_: T) => Unit,
                             selection: Option[Subject[T]] = None,
-                            moveTabs: Boolean = false) extends UiWidget
+                            moveTabs: Boolean = false,
+                            onTabsOrdered: Seq[(T, Int)] => Any = (_: Seq[(T, Int)]) => Unit
+                           ) extends UiWidget
 
 trait UiOrientation
 
@@ -166,6 +169,7 @@ case class UiPanel(layoutData: String = "",
                    items: Observable[Seq[UiWidget]] = just(Seq())) extends UiWidget
 
 object UiImplicits {
+
     implicit def anyToJust[T](t: T): Observable[T] = Observable.just(t)
 
     implicit def optToSome[T](t: T): Option[T] = Some(t)
@@ -186,13 +190,6 @@ object UiImplicits {
 
         def asPublishSubject($: Observable[T] => Listanable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); (subject <<< obs) ($); subject }
     }
-
-
-    //    implicit def consumerToSome(f: () => Unit): Option[() => Unit] = Some(f)
-
-    //    implicit def asSubject[T](o: Observable[T]): Subject[T] = {val subject = Subject.publishSubject[T](); subject <<< o; subject }
-    //
-    //    implicit def asOptSubject[T](o: Observable[T]): Option[Subject[T]] = Some(asSubject(o))
 
 }
 

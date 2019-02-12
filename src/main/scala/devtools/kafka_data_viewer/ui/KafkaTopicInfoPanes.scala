@@ -1,9 +1,12 @@
 package devtools.kafka_data_viewer.ui
 
-import devtools.kafka_data_viewer.AppSettings.FilterData
+import scala.language.postfixOps
+
+import io.reactivex.schedulers.Schedulers
+
 import devtools.kafka_data_viewer.KafkaConnTopicsInfo.{KafkaTopicsMgmt, _}
 import devtools.kafka_data_viewer.KafkaDataViewer
-import devtools.kafka_data_viewer.KafkaDataViewer.{TopicRecord, isNumber}
+import devtools.kafka_data_viewer.KafkaDataViewer.{FilterData, TopicRecord, isNumber}
 import devtools.kafka_data_viewer.kafkaconn.Connector._
 import devtools.kafka_data_viewer.kafkaconn.MessageFormats.{AvroMessage, MessageType, StringMessage, ZipMessage}
 import devtools.lib.rxext.ListChangeOps.SetList
@@ -14,9 +17,6 @@ import devtools.lib.rxext.Subject.{behaviorSubject, publishSubject}
 import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
-import io.reactivex.schedulers.Schedulers
-
-import scala.language.postfixOps
 
 /*
 class TypesRegistry(
