@@ -26,6 +26,7 @@ import javafx.stage.{Modality, Stage, StageStyle}
 
 import devtools.lib.rxext.ListChangeOps.{AddItems, InsertItems, RemoveItemObjs, RemoveItems, SetList}
 import devtools.lib.rxext.{Observable, Subject}
+import devtools.lib.rxui.FxRender.primaryStage
 
 object FxRender {
 
@@ -709,7 +710,17 @@ object FxRender {
         override def runApp(root: UiWidget, postAction: UiRenderer => Unit = null): Unit = {
             FxRender.rootContent = root
             FxRender.postAction = postAction
-            LauncherImpl.launchApplication(classOf[App], Array())
+            //LauncherImpl.launchApplication(classOf[App], Array())
+            FxApp.appRunner = (primaryStage: Stage) => startApp(primaryStage)
+            FxApp.main(Array())
+        }
+
+        def startApp(primaryStage: Stage): Unit = {
+            FxRender.primaryStage = primaryStage
+            val rootContent = FxRender.renderers.renderer(FxRender.rootContent)(FxRender.renderers).render()
+            applyContentToState(rootContent, primaryStage, fullScreen = true)
+            primaryStage.show()
+            if (postAction != null) postAction(FxRender.renderers)
         }
 
         override def runModal(content: UiWidget, hideTitle: Boolean = false, close: Option[Subject[_ >: Unit]] = None): Unit = {
@@ -796,16 +807,5 @@ object FxRender {
     var renderers: FxRenderers = _
     var primaryStage: Stage = _
     var postAction: UiRenderer => Unit = _
-
-    class App extends Application {
-        override def start(primaryStage: Stage): Unit = {
-            FxRender.primaryStage = primaryStage
-            val rootContent = FxRender.renderers.renderer(FxRender.rootContent)(FxRender.renderers).render()
-            applyContentToState(rootContent, primaryStage, fullScreen = true)
-            primaryStage.show()
-            if (postAction != null) postAction(FxRender.renderers)
-        }
-    }
-
 
 }

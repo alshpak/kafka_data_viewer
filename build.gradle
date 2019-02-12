@@ -58,6 +58,9 @@ classes {
 
 sourceSets {
     main {
+        java {
+            srcDirs = ['src/main/java']
+        }
         scala {
             srcDirs = ['src/main/scala']
         }
