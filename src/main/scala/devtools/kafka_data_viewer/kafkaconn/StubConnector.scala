@@ -43,7 +43,7 @@ object StubConnector {
 
             override def close(): Unit = Unit
 
-            override def queryTopicPartitions(topic: String): Seq[Int] = ???
+            override def queryTopicPartitions(topic: String): Seq[Int] = Seq(0)
         }
 
         override def connectProducer(): ProducerConnection = new ProducerConnection {

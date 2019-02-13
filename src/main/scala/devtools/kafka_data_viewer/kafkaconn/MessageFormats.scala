@@ -2,8 +2,8 @@ package devtools.kafka_data_viewer.kafkaconn
 
 import java.io._
 import java.util.zip.{GZIPInputStream, GZIPOutputStream}
+import scala.language.postfixOps
 
-import devtools.kafka_data_viewer.kafkaconn.Connector.withClosable
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
 import io.confluent.kafka.serializers.{KafkaAvroDeserializer, KafkaAvroSerializer}
 import org.apache.avro.generic.GenericData
@@ -11,7 +11,7 @@ import org.apache.avro.reflect.ReflectData
 import org.apache.avro.{Conversions, Schema}
 import tech.allegro.schema.json2avro.converter.JsonAvroConverter
 
-import scala.language.postfixOps
+import devtools.kafka_data_viewer.kafkaconn.Connector.withClosable
 
 object MessageFormats {
 
@@ -34,7 +34,7 @@ object MessageFormats {
     }
 
     case class AvroMessage(registry: String) extends MessageType {
-        override def formatter(): MessageFormat = new AvroMessageFormat(registry)
+        override def formatter(): MessageFormat = AvroRegistries(registry)
 
         override def display: String = "Avro:" + registry
     }
@@ -78,28 +78,38 @@ object GZipMessageFormat extends MessageFormat {
 
 }
 
+object AvroRegistries {
+
+    ReflectData.get().addLogicalTypeConversion(new Conversions.DecimalConversion())
+
+    private val registriesCache = scala.collection.mutable.HashMap[String, AvroMessageFormat]()
+
+    def apply(avroServer: String): AvroMessageFormat = {
+        if (!registriesCache.contains(avroServer)) {
+            registriesCache += avroServer -> new AvroMessageFormat(avroServer)
+        }
+        registriesCache(avroServer)
+    }
+}
+
 class AvroMessageFormat(avroServer: String) extends MessageFormat {
 
-    private val schemaClient = Option(avroServer).map(host => {
-        ReflectData.get().addLogicalTypeConversion(new Conversions.DecimalConversion())
-        new CachedSchemaRegistryClient(host, 100)
-    })
-    private val registryDeser = schemaClient.map(client => new KafkaAvroDeserializer(client))
-
+    private val schemaClient = new CachedSchemaRegistryClient(avroServer, 100)
+    private val registryDeser = new KafkaAvroDeserializer(schemaClient)
 
     override def encode(topic: String, message: String): Array[Byte] = {
-        val schemaMeta = schemaClient.get.getLatestSchemaMetadata(topic)
+        val schemaMeta = schemaClient.getLatestSchemaMetadata(topic)
         val schema = new Schema.Parser().parse(schemaMeta.getSchema)
 
         val converter = new JsonAvroConverter()
         val record = converter.convertToGenericDataRecord(message.getBytes, schema)
-        val bytes = new KafkaAvroSerializer(schemaClient.get).serialize(topic, record)
+        val bytes = new KafkaAvroSerializer(schemaClient).serialize(topic, record)
         bytes
     }
 
     override def decode(topic: String, bytes: Array[Byte]): String =
         Option(bytes).map(bytes => try {
-            val record = registryDeser.get.deserialize(topic, bytes).asInstanceOf[GenericData.Record]
+            val record = registryDeser.deserialize(topic, bytes).asInstanceOf[GenericData.Record]
             val converter = new JsonAvroConverter()
             val json = new String(converter.convertToJson(record), "UTF8")
             json

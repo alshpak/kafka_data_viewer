@@ -18,26 +18,6 @@ import devtools.lib.rxext.{BehaviorSubject, Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
 
-/*
-class TypesRegistry(
-                           private val topicToType: BehaviorSubject[Seq[(String, MessageType)]],
-                           private val avroRegistires: BehaviorSubject[Seq[String]]) {
-
-    private var topicToTypeCache = Map[String, MessageType]()
-    for (items <- topicToType) topicToTypeCache = items.toMap
-
-    def listRegistries(): Seq[String] = avroRegistires.value
-
-    def addRegistry(registry: String): Unit = avroRegistires << avroRegistires.value :+ registry
-
-    def encoder(topic: String): MessageType = topicToTypeCache.getOrElse(topic, StringMessage)
-
-    def changeType(topic: String, messageType: MessageType): Unit = {
-        topicToType << topicToType.value.filterNot(_._1 == topic) :+ (topic -> messageType)
-    }
-}
-*/
-
 class TopicsInfoList(val topicsWithSizes: Observable[TopicsWithSizes], onRefresh: => Unit) {
     def requestRefresh(): Unit = onRefresh
 }
@@ -80,7 +60,7 @@ class RecordsOutputTablePane(val layoutData: String,
     (builtRecords <<< records.map(recsSeq => recsSeq.map(DecodingFunction.decode(encFunc)))) ($)
 
     for ((_, recsSeq) <- $(refreshData.withLatestFrom(recordsCache))) {
-        builtRecords << ResetLogOp()
+            builtRecords << ResetLogOp()
         builtRecords << AppendLogOp(recsSeq.map(DecodingFunction.decode(encFunc)))
     }
 

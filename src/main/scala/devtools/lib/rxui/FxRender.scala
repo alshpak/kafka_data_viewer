@@ -250,9 +250,8 @@ object FxRender {
                             col.setCellValueFactory((param: TableColumn.CellDataFeatures[T, String]) => {
                                 applying(new SimpleStringProperty()) { prop =>
                                     val rowModel: T = param.getValue
-                                    val $row$ = new DisposeStore()
-                                    rowObservables += rowModel -> $row$
-                                    for (value <- $row$(colModel.value(param.getValue))) prop.setValue(value)
+                                    val $row$ = rowObservables(rowModel)
+                                    for (value <- $row$(colModel.value(rowModel))) prop.setValue(value)
                                 }
                             })
                             col.setSortable(colModel.onSort.isDefined)
@@ -268,19 +267,32 @@ object FxRender {
             }
 
             for (itemsOp <- $(tableModel.items)) itemsOp match {
-                case SetList(items) => tableView.getItems.setAll(items.asJavaCollection)
-                case AddItems(items) => tableView.getItems.addAll(items.asJavaCollection)
-                case InsertItems(index, items) => tableView.getItems.addAll(index, items.asJavaCollection)
-                case RemoveItems(index, amount) => tableView.getItems.remove(index, index + amount)
-                case RemoveItemObjs(items) => tableView.getItems.removeAll(items: _*)
+                case SetList(items) =>
+                    tableView.getItems.clear()
+                    items.foreach(rowObservables += _ -> new DisposeStore())
+                    tableView.getItems.setAll(items.asJavaCollection)
+                case AddItems(items) =>
+                    items.foreach(rowObservables += _ -> new DisposeStore())
+                    tableView.getItems.addAll(items.asJavaCollection)
+                case InsertItems(index, items) =>
+                    items.foreach(rowObservables += _ -> new DisposeStore())
+                    tableView.getItems.addAll(index, items.asJavaCollection)
+                case RemoveItems(index, amount) =>
+                    tableView.getItems.remove(index, index + amount)
+                case RemoveItemObjs(items) =>
+                    tableView.getItems.removeAll(items.asJava)
             }
 
             tableView.getItems.addListener(new ListChangeListener[T] {
                 override def onChanged(c: ListChangeListener.Change[_ <: T]): Unit = {
                     while (c.next()) {
                         c.getRemoved.forEach { rowModel =>
-                            rowObservables(rowModel).dispose()
-                            rowObservables -= rowModel
+                                if (!rowObservables.contains(rowModel)) {
+                                    println("ERROR: row does not exists " + rowModel)
+                                } else {
+                                    rowObservables(rowModel).dispose()
+                                    rowObservables -= rowModel
+                                }
                         }
                     }
                 }
@@ -513,17 +525,30 @@ object FxRender {
                 tabToRenderer.foreach { case (_, renderer) => renderer.dispose() }
                 tabToRenderer.clear()
                 pane.getTabs.clear()
-                tabs.foreach { tabModel =>
+
+                def addTab(tabModel: UiTab, delayContent: Boolean): Unit = {
                     val tab = new Tab()
                     for (label <- $(tabModel.label)) tab.setText(label)
                     for (content <- $(tabModel.content)) {
                         if (tabToRenderer.contains(tab)) tabToRenderer(tab).dispose()
                         val tabRenderer = renderers.renderer(content)
-                        tab.setContent(tabRenderer.render())
+
+                        if (delayContent)
+                            new Thread(() => {
+                                Thread.sleep(100L)
+                                Platform.runLater(() => tab.setContent(tabRenderer.render()))
+                            }).start()
+                        else tab.setContent(tabRenderer.render())
+
                         tabToRenderer += tab -> tabRenderer
                     }
                     tab.setClosable(false)
                     pane.getTabs.add(tab)
+                }
+
+                if (tabs.nonEmpty) {
+                    addTab(tabs.head, delayContent = false)
+                    tabs.tail.foreach(tab => addTab(tab, delayContent = true))
                 }
             }
             pane

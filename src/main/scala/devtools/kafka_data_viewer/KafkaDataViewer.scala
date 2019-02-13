@@ -35,6 +35,8 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
         val connector = new KafkaConnector(
             host = connDef.kafkaHost.value)
 
+        //val connector = StubConnector.stubConnector()
+
         ConnectionsSet(logging = connector.connectConsumer(), read = connector.connectConsumer(), master = connector.connectConsumer(), producer = connector.connectProducer())
     }
 
@@ -79,7 +81,9 @@ class KafkaDataViewerAppPane(val layoutData: String = "",
 
         for (connectResultOpt <- $(connectionDone); connectResult <- connectResultOpt) {
             connectResult match {
-                case Right(connHndl) => connectOps << AddItems(Seq(connHndl)); selected << connHndl
+                case Right(connHndl) =>
+                    connectOps << AddItems(Seq(connHndl))
+                    selected << connHndl
                 case Left(error) => uiRenderer.alert(ErrorAlert, "Connection in cancelled; " + error)
             }
         }

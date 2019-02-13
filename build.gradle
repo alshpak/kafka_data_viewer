@@ -35,6 +35,7 @@ dependencies {
     compile 'org.yaml:snakeyaml:1.23' // Apache 2
     
     testCompile "junit:junit:4.4"
+    testCompile "org.projectlombok:lombok:1.16.12"
 }
 
 task createProperties(dependsOn: processResources) {
@@ -70,6 +71,9 @@ sourceSets {
     }
     test {
         scala {
+            srcDirs = ['src/test']
+        }
+        java {
             srcDirs = ['src/test']
         }
     }

@@ -138,13 +138,12 @@ class ProduceMessagePane(val layoutData: String = "",
             .map(partitions => defaultPartitioner +: partitions.map(_.toString))
             .withCachedLatest()
 
-    private val partition = behaviorSubject[String](defaultPartitioner)
-    (partition <<< partitionsList.map(_ => defaultPartitioner)) ($)
+    private val partition = behaviorSubject[String](settings.partition.value.map(_.toString).getOrElse(defaultPartitioner))
 
     settings.custom << (topicData == CustomTopic)
     (settings.topic <<< topicName) ($)
     (settings.msgType <<< selectedMessageType.value) ($)
-    (settings.partition <<< partition.map(partitionName => if (partitionName == defaultPartitioner) None else partitionName.toInt)) ($)
+    (settings.partition <<< partition.map(partitionName => if (partitionName == defaultPartitioner) None else Some(partitionName.toInt))) ($)
 
     private val key = settings.key
     private val message = settings.value
