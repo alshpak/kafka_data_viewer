@@ -1,16 +1,16 @@
 package devtools.lib.rxui
 
 import java.util.UUID
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.language.{implicitConversions, postfixOps}
 
-import com.sun.javafx.application.LauncherImpl
 import io.reactivex.Scheduler
 import io.reactivex.Scheduler.Worker
 import io.reactivex.disposables.Disposable
-import javafx.application.{Application, Platform}
+import javafx.application.Platform
 import javafx.beans.property.{Property, SimpleStringProperty}
 import javafx.beans.value.{ChangeListener, ObservableValue}
 import javafx.collections.{ListChangeListener, ObservableList}
@@ -26,7 +26,6 @@ import javafx.stage.{Modality, Stage, StageStyle}
 
 import devtools.lib.rxext.ListChangeOps.{AddItems, InsertItems, RemoveItemObjs, RemoveItems, SetList}
 import devtools.lib.rxext.{Observable, Subject}
-import devtools.lib.rxui.FxRender.primaryStage
 
 object FxRender {
 
@@ -135,7 +134,7 @@ object FxRender {
     }
 
     class UiListRenderer[T](list: UiList[T]) extends ObservingRenderer[ListView[T]] {
-        private val $row$ = new DisposeStore()
+        private val $rows$ = new DisposeStore()
         private val $menu$ = new DisposeStore()
 
         override def render(): ListView[T] = {
@@ -148,13 +147,13 @@ object FxRender {
                     override def updateItem(item: T, empty: Boolean): Unit = {
                         super.updateItem(item, empty)
                         if (!empty && item != null) {
-                            for (text <- $row$(list.valueProvider(item))) setText(text) /// TODO INCORRECT YET, MUST DISPOSE ONE ROW
+                            for (text <- $rows$(list.valueProvider(item))) setText(text)
                         } else setText(null)
                     }
                 }
             })
             for (items <- $(list.items)) {
-                $row$.dispose()
+                $rows$.dispose()
                 c.getItems.clear()
                 c.getItems.addAll(items.asJava)
             }
@@ -188,7 +187,7 @@ object FxRender {
         }
 
         override def dispose(): Unit = {
-            $row$.dispose()
+            $rows$.dispose()
             $menu$.dispose()
             super.dispose()
         }
