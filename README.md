@@ -1,6 +1,6 @@
 # Kafka Data Viewer
 
-Desktop UI Tool for Kafka that provides ability to read and publish kafka records.
+This tool is desktop UI Client for Kafka that provides ability to read and publish kafka records.
 
 # Description
 
@@ -17,8 +17,20 @@ When connected you can use:
 The application supports different message encodings, the currently supported:
 
 - String
+
 - GZIP
+
 - Avro
+
+# Additional features
+
+Application allows to list kafka consumer groups and detailed information about group.
+
+# Compatibility
+
+Application is based on Kafka 2.0 binaries.
+
+ZooKeeper connection is not supported anymore, as well as information about ZooKeeper connected clients.
 
 # Download
 
