@@ -346,16 +346,16 @@ object FxRender {
             val rootItem = new TreeItem[T]()
             treeTable.setRoot(rootItem)
 
-            for (menuItems <- $(treeModel.menu)) // TODO MENU MUST BE CHANGED AS IN TABLE
-                treeTable.setOnContextMenuRequested((event: ContextMenuEvent) =>
-                    for (selection <- Option(treeTable.getSelectionModel.getSelectedItem).flatMap(x => Option(x.getValue))) {
-                        val ctxMenuRoot = applying(new ContextMenu()) { cm =>
-                            cm.getItems.addAll(menuItems.map(itemModel =>
-                                applying(new MenuItem(itemModel.text)) { item => }).asJavaCollection)
-                        }
-                        treeTable.setContextMenu(ctxMenuRoot)
-                        ctxMenuRoot.show(treeTable, event.getScreenX, event.getScreenY)
-                    })
+            def menuToItems(parent: ContextMenu)(itemModel: UiMenuItem): MenuItem =
+                if (itemModel.subitems.isEmpty) applying(new MenuItem(itemModel.text)) { item => item.setOnAction { evt => parent.hide(); evt.consume(); itemModel.onSelect(); } }
+                else applying(new Menu(itemModel.text)) { item => item.getItems.addAll(itemModel.subitems.map(menuToItems(parent)).asJavaCollection) }
+
+            for (menuItems: Seq[UiMenuItem] <- $(treeModel.menu); if menuItems.nonEmpty) {
+                val ctxMenuRoot = applying(new ContextMenu()) { cm =>
+                    cm.getItems.addAll(menuItems.map(menuToItems(cm)).asJavaCollection)
+                }
+                treeTable.setContextMenu(ctxMenuRoot)
+            }
 
             class LazyTreeItem(val itemModel: T) extends TreeItem(itemModel) {
 
@@ -367,8 +367,10 @@ object FxRender {
 
                 override def getChildren: ObservableList[TreeItem[T]] = {
                     if (!loaded) {
-                        for (items <- $(treeModel.subitems(itemModel))) super.getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection) /// TODO INCORRECT YET
                         loaded = true
+                        for (items <- $(treeModel.subitems(itemModel))) {
+                            super.getChildren.setAll(items.map(new LazyTreeItem(_)).asJavaCollection)
+                        } /// TODO INCORRECT YET
                     }
                     super.getChildren
                 }

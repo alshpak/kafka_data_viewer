@@ -3,11 +3,10 @@ package devtools.kafka_data_viewer.ui
 import devtools.kafka_data_viewer.KafkaDataViewer.ConnectionDefinition
 import devtools.kafka_data_viewer.kafkaconn.KafkaGroupsInfo
 import devtools.kafka_data_viewer.kafkaconn.KafkaGroupsInfo.PartitionAssignmentState
-import devtools.lib.rxext.Observable
 import devtools.lib.rxext.Subject.behaviorSubject
+import devtools.lib.rxext.{Observable, Subject}
 import devtools.lib.rxui.UiImplicits._
 import devtools.lib.rxui._
-import Observable.just
 
 class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinition) extends UiComponent {
 
@@ -57,7 +56,7 @@ class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinitio
                             .map(state => PartitionInfo(state)).sortBy(x => (x.name, x.partition))))
                         .sortBy(_.name),
             ))
-    )/*,
+    ) /*,
         Option(condef.zoo).filter(!_.isEmpty).map(zoo =>
             Root("ZooGroups",
                 queryGroups = () => KafkaGroupsInfo.getZooGroups(zoo).map(
@@ -65,6 +64,19 @@ class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinitio
                             .map(state => PartitionInfo(state)).sortBy(x => (x.name, x.partition)))).sortBy(_.name),
             )))*/
             .filter(_.isDefined).map(_.get)
+
+    private val selection = Subject.publishSubject[Seq[Elem]]()
+
+    private val menu =
+        selection
+                .map(_.headOption)
+                .map(_.map {
+                    case x: Root => Seq(UiMenuItem("Refresh", () => x.refresh()))
+                    case x: Group => Seq(UiMenuItem("Refresh", () => x.refresh()))
+                    case _ => Seq()
+                })
+                .map(_.getOrElse(Seq()))
+
 
     override def content(): UiWidget = UiPanel(layoutData, Grid(), items = Seq(
         UiTree[Elem]("grow", items = items,
@@ -78,6 +90,7 @@ class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinitio
                 UiColumn("Host", _.host),
                 UiColumn("Client ID", _.clientId)
             ),
+            selection = selection,
             subitems = _.subitems(),
             expanded = _ => false,
             hasChildren = {
@@ -85,12 +98,8 @@ class ConsumersInfoPane(val layoutData: String = "", condef: ConnectionDefinitio
                 case Group(_, _) => true
                 case _ => false
             }
-//            ,
-//            menu = Some {
-//                case x: Root => Seq(UiMenuItem("Refresh", () => x.refresh()))
-//                case x: Group => Seq(UiMenuItem("Refresh", () => x.refresh()))
-//                case _ => Seq()
-//            }
+            ,
+            menu = menu
         )
     ))
 }

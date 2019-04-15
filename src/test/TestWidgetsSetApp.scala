@@ -171,17 +171,30 @@ object TestWidgetsSetApp {
                         override val layoutData: String = "grow"
 
                         trait TreeItem {
-                            val label:String
-                            val value:String = ""
-                            def subitems(): Seq[TreeItem] = Seq()
+                            val label: String
+                            val value: String = ""
+
+                            def query(): Seq[TreeItem] = Seq()
+
+                            private lazy val items = behaviorSubject[Seq[TreeItem]](query())
+
+                            def subitems(): Observable[Seq[TreeItem]] = items
+
                         }
-                        case class RootItem(label:String = "Root") extends TreeItem {
-                            override def subitems(): Seq[TreeItem] = {
-                                Thread.sleep(10000)
+
+                        case class RootItem(label: String = "Root") extends TreeItem {
+                            override def query(): Seq[TreeItem] = {
+                                Thread.sleep(2000)
                                 Seq(SubItem())
                             }
                         }
-                        case class SubItem(label: String = "SubItem", override val value: String = "SomeValue") extends TreeItem
+
+                        case class SubItem(label: String = "SubItem", override val value: String = "SomeValue") extends TreeItem {
+                            override def query(): Seq[TreeItem] = Seq(LeafItem())
+                        }
+
+
+                        case class LeafItem(label: String = "LeafItem", override val value: String = "Leaf Value") extends TreeItem
 
                         override def content(): UiWidget =
                             UiTree[TreeItem](layoutData,
@@ -193,7 +206,8 @@ object TestWidgetsSetApp {
                                 expanded = _ => false,
                                 subitems = _.subitems(),
                                 hasChildren = {
-                                    case RootItem(_) => true
+                                    case _: RootItem => true
+                                    case _: SubItem => true
                                     case _ => false
                                 }
                             )
