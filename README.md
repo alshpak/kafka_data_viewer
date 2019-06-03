@@ -22,6 +22,19 @@ The application supports different message encodings, the currently supported:
 
 - Avro
 
+# Screenshots
+
+![Manage connections](https://raw.githubusercontent.com/alshpak/kafka_data_viewer/screenshots/screenshots/manage_connections.png)
+
+![Listen for topics](https://raw.githubusercontent.com/alshpak/kafka_data_viewer/screenshots/screenshots/listen_for_selected_topics.png)
+
+![Read selected topic](https://raw.githubusercontent.com/alshpak/kafka_data_viewer/screenshots/screenshots/read_selected_topic.png)
+
+![Publish to topic](https://raw.githubusercontent.com/alshpak/kafka_data_viewer/screenshots/screenshots/publish_to_topic.png)
+
+![Change topic dencoder](https://raw.githubusercontent.com/alshpak/kafka_data_viewer/screenshots/screenshots/change_topic_decoder.png)
+
+
 # Additional features
 
 Application allows to list kafka consumer groups and detailed information about group.
